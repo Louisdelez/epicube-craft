@@ -1,13 +1,13 @@
 # Comptes des joueurs
 
-Le jeu sait reconnaître un joueur par son **compte**, sans jamais voir son mot de passe. Ce document décrit ce que le jeu attend, pour y brancher le service de comptes et le launcher, qui restent à écrire.
+Le jeu sait reconnaître un joueur par son **compte**, sans jamais voir son mot de passe. Les comptes sont ceux d'[Epicube Hub](https://github.com/Louisdelez/epicube-hub) : le même compte sert dans le launcher, sur le site et dans le jeu. Ce document décrit ce que le jeu attend du service de comptes et du launcher.
 
 ## Qui fait quoi
 
 | Élément | Rôle | État |
 |---|---|---|
-| **Service de comptes** | inscription, connexion, mots de passe ; signe les jetons | à écrire |
-| **Launcher** | connecte le joueur, obtient un jeton, lance le jeu | à écrire |
+| **Service de comptes** | inscription, connexion, mots de passe ; signe les jetons | fait : le serveur d'Epicube Hub |
+| **Launcher** | connecte le joueur, obtient un jeton, lance le jeu | fait : Epicube Hub |
 | **Jeu** (client) | reçoit le jeton du launcher, le présente aux serveurs, relève leur défi | fait |
 | **Serveur de jeu** | vérifie le jeton et le défi, range la sauvegarde sous l'identifiant du compte | fait |
 
@@ -16,7 +16,7 @@ Le serveur de jeu ne contacte jamais le service de comptes : il lui suffit de sa
 ## Déroulement d'une connexion
 
 1. Le launcher crée une **paire de clés de session** (Ed25519), neuve à chaque connexion au compte.
-2. Il envoie identifiant, mot de passe et **clé publique de session** au service de comptes.
+2. Il envoie la **clé publique de session** au service de comptes, auprès duquel le joueur est déjà connecté.
 3. Le service répond par un **jeton** signé, qui contient l'identifiant du compte, le pseudo, la date de fin et la clé publique de session.
 4. Le launcher lance le jeu en lui remettant le jeton et la **clé privée de session**.
 5. Le jeu présente le jeton au serveur de jeu.
@@ -97,7 +97,7 @@ adresse=jeu.exemple.fr:25600
 | `cle=` | clé publique du service de comptes, en base64url ou en hexadécimal |
 | `adresse=` | adresse publique du serveur ; une ligne par adresse. Renseignée, elle bloque les connexions relayées |
 
-L'option `--comptes obligatoires` du serveur a priorité sur le fichier. La clé peut aussi venir de la variable `EPICUBE_CLE_COMPTES`. Quand le service existera, sa clé publique s'inscrira dans le jeu (`SERVICE_KEY`, dans `shared/src/account.rs`) et plus personne n'aura à la saisir.
+L'option `--comptes obligatoires` du serveur a priorité sur le fichier. La clé publique d'Epicube Hub est inscrite dans le jeu (`SERVICE_KEY`, dans `shared/src/account.rs`) : personne n'a à la saisir. La ligne `cle=` ou la variable `EPICUBE_CLE_COMPTES` ne servent qu'à utiliser un autre service de comptes, par exemple pour des essais.
 
 En mode facultatif :
 
@@ -118,7 +118,7 @@ La sauvegarde d'un joueur est rangée sous cet identifiant : `saves/<monde>/joue
 
 Le serveur annonce l'identifiant de chaque joueur aux autres (`PlayerJoin`). Amis, messages, cosmétiques et préférences en ligne pourront s'y rattacher sans changer le protocole de connexion.
 
-## Essayer sans le service
+## Essayer sans Epicube Hub
 
 L'outil `epicube-craft-jeton` joue le rôle du service et du launcher :
 
@@ -130,7 +130,7 @@ cargo run -p server --bin epicube-craft-jeton -- cles
 cargo run -p server --bin epicube-craft-jeton -- jeton --nom Hanako
 ```
 
-La première commande crée une clé de service d'essai (`service-essai.cle`) et affiche la clé publique à mettre dans `comptes.txt`. La seconde affiche les deux variables à fournir au jeu. Options : `--id <uuid>`, `--heures <n>`, `--cle <fichier>`.
+La première commande crée une clé de service d'essai (`service-essai.cle`) et affiche la clé publique à mettre dans `comptes.txt` ou dans `EPICUBE_CLE_COMPTES` : sans cela, le jeu ne reconnaît que les jetons d'Epicube Hub. La seconde affiche les deux variables à fournir au jeu. Options : `--id <uuid>`, `--heures <n>`, `--cle <fichier>`.
 
 Ces clés d'essai ne doivent jamais servir à de vrais joueurs.
 

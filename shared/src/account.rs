@@ -14,9 +14,16 @@ use sha2::{Digest, Sha256};
 /// Identifiant d'un compte : un UUID, qui ne change jamais meme si le joueur change de pseudo.
 pub type Id = [u8; 16];
 
-/// Cle publique du service de comptes, connue de tous les serveurs. Aucune tant que le service
-/// n'existe pas : on la fournit alors par `comptes.txt` ou la variable EPICUBE_CLE_COMPTES.
-pub const SERVICE_KEY: Option<[u8; 32]> = None;
+/// Cle publique du service de comptes, connue de tous les serveurs : celle d'Epicube Hub, qui
+/// signe les jetons (en base64url : -hWp22MOHZMlv6p1GKn4mClyud_S1TwJ3ogSv6U821c).
+/// `comptes.txt` ou la variable EPICUBE_CLE_COMPTES permettent d'en utiliser une autre.
+#[rustfmt::skip]
+pub const SERVICE_KEY: Option<[u8; 32]> = Some([
+    0xfa, 0x15, 0xa9, 0xdb, 0x63, 0x0e, 0x1d, 0x93,
+    0x25, 0xbf, 0xaa, 0x75, 0x18, 0xa9, 0xf8, 0x98,
+    0x29, 0x72, 0xb9, 0xdf, 0xd2, 0xd5, 0x3c, 0x09,
+    0xde, 0x88, 0x12, 0xbf, 0xa5, 0x3c, 0xdb, 0x57,
+]);
 /// Variable d'environnement qui remplace `SERVICE_KEY` (cle publique en base64url ou en hexadecimal).
 pub const KEY_ENV: &str = "EPICUBE_CLE_COMPTES";
 /// Variables par lesquelles le launcher remet au jeu le jeton et la cle privee de session.
