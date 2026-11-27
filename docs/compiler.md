@@ -2,7 +2,7 @@
 
 ## Prérequis
 
-- [Rust](https://rustup.rs), version stable.
+- [Rust](https://rustup.rs). Le projet fixe sa version (1.98) dans `rust-toolchain.toml` : `rustup` l'installe tout seul au premier `cargo`. Les versions plus récentes refusent pour l'instant une dépendance de la fenêtre macOS.
 - **Windows** : les outils de compilation C++ de Visual Studio (proposés par l'installateur de Rust).
 - **Linux** : un compilateur C, `pkg-config` et les en-têtes de la bibliothèque son ALSA.
 

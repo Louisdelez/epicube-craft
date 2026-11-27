@@ -36,7 +36,7 @@ Les commandes principales : `ZQSD` (ou `WASD`) pour bouger, `Espace` pour sauter
 
 ## Compiler
 
-Il faut [Rust](https://rustup.rs) (version stable). Sous Linux, ajoutez les en-têtes de la bibliothèque son, par exemple `sudo apt install build-essential pkg-config libasound2-dev`.
+Il faut [Rust](https://rustup.rs) ; la version utilisée est fixée par le projet et s'installe toute seule. Sous Linux, ajoutez les en-têtes de la bibliothèque son, par exemple `sudo apt install build-essential pkg-config libasound2-dev`.
 
 ```bash
 cargo run --release -p client

@@ -16,7 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # La version de Rust est fixee par rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Bibliotheques systeme (Linux)
         if: runner.os == 'Linux'

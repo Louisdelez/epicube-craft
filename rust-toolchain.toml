@@ -1,0 +1,4 @@
+# Version de Rust avec laquelle le jeu est compile et teste. Une version plus recente (1.100) refuse
+# une dependance de la fenetre macOS (objc2 0.4, tiree par winit 0.29).
+[toolchain]
+channel = "1.98.0"
