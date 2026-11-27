@@ -14,9 +14,8 @@ pub const TILE: usize = 64;
 const FONT_Y: usize = 1024;
 const GLYPH_CELL: usize = 64;
 /// Taille a laquelle la police est tracee dans l'atlas.
-pub const FONT_PX: f32 = 16.0;
+pub const FONT_PX: f32 = crate::font::HEIGHT as f32;
 
-static FONT_DATA: &[u8] = include_bytes!("../fonts/DotGothic16-Regular.ttf");
 
 type C = [f32; 4];
 const CLEAR: C = [0.0; 4];
@@ -450,36 +449,46 @@ const DRUM: [&str; 8] = ["........", "...xxx..", "..xxxxx.", "..xxxxx.", "..xxxx
 /// Trace la police a points dans l'atlas, a sa taille native de 16 pixels, sans lissage,
 /// et remplit la table des caracteres.
 fn bake_font(img: &mut Img) {
-    let font = match fontdue::Font::from_bytes(FONT_DATA, fontdue::FontSettings::default()) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("Police illisible : {e}");
-            return;
-        }
-    };
-    let ascent = font.horizontal_line_metrics(FONT_PX).map(|m| m.ascent).unwrap_or(FONT_PX * 0.86).round();
+    use crate::font;
+    // Chaque point de la police occupe un carre de DOT pixels dans l'atlas : la lecture au plus proche
+    // voisin tombe toujours au coeur d'un point, jamais sur une frontiere.
+    const DOT: usize = 4;
+    let fallback = font::shape('?');
     let mut glyphs = Vec::with_capacity(224);
     for code in 32u32..256 {
         let ch = char::from_u32(code).unwrap_or('?');
-        let (m, bitmap) = font.rasterize(ch, FONT_PX);
         let k = (code - 32) as usize;
         let (cx, cy) = ((k % 32) * GLYPH_CELL + 1, FONT_Y + (k / 32) * GLYPH_CELL + 1);
-        let (w, h) = (m.width.min(GLYPH_CELL - 2), m.height.min(GLYPH_CELL - 2));
-        for y in 0..h {
-            for x in 0..w {
-                // Tout ou rien : un pixel de police est plein ou vide.
-                let on = bitmap[y * m.width + x] >= 100;
-                img.set_px(cx + x, cy + y, [255, 255, 255, if on { 255 } else { 0 }]);
+        for y in 0..GLYPH_CELL - 2 {
+            for x in 0..GLYPH_CELL - 2 {
+                img.set_px(cx + x, cy + y, [255, 255, 255, 0]);
+            }
+        }
+        let Some(shape) = font::shape(ch).or_else(|| font::shape('?')).or_else(|| fallback.as_ref().map(|f| font::Shape { rows: f.rows.clone(), top: f.top })) else {
+            glyphs.push(Glyph::default());
+            continue;
+        };
+        let (w, h) = (font::width(&shape), shape.rows.len());
+        for (y, row) in shape.rows.iter().enumerate() {
+            for (x, dot) in row.chars().enumerate() {
+                if dot == '#' {
+                    for py in 0..DOT {
+                        for px in 0..DOT {
+                            img.set_px(cx + x * DOT + px, cy + y * DOT + py, [255, 255, 255, 255]);
+                        }
+                    }
+                }
             }
         }
         let s = AT as f32;
         glyphs.push(Glyph {
-            uv: [cx as f32 / s, cy as f32 / s, (cx + w) as f32 / s, (cy + h) as f32 / s],
+            uv: [cx as f32 / s, cy as f32 / s, (cx + w * DOT) as f32 / s, (cy + h * DOT) as f32 / s],
             w: w as f32,
             h: h as f32,
-            ox: m.xmin as f32,
-            oy: ascent - (m.ymin as f32 + m.height as f32),
-            adv: m.advance_width.round(),
+            ox: 0.0,
+            oy: shape.top as f32,
+            // Un point d'espace entre deux lettres.
+            adv: w as f32 + 1.0,
         });
     }
     let _ = GLYPHS.set(glyphs);
@@ -886,3 +895,4 @@ pub fn build() -> Img {
     bake_font(&mut img);
     img
 }
+

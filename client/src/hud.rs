@@ -575,10 +575,10 @@ impl App {
         if points > 0.0 && mortal {
             for i in 0..10 {
                 let x = bx + i as f32 * 8.0 * s;
-                ui.tile(x, iy - 9.0 * s, 8.0 * s, t::ARMOR_EMPTY, 1.0, WHITE);
+                ui.hud(x, iy - 10.0 * s, s, t::ARMOR_EMPTY, 0, 9, WHITE);
                 let fill = ((points - i as f32 * 2.0) / 2.0).clamp(0.0, 1.0);
                 if fill > 0.0 {
-                    ui.tile(x, iy - 9.0 * s, 8.0 * s, t::ARMOR, if fill < 1.0 { 0.5 } else { 1.0 }, WHITE);
+                    ui.hud(x, iy - 10.0 * s, s, t::ARMOR, 0, if fill < 1.0 { 5 } else { 9 }, WHITE);
                 }
             }
         }
@@ -586,7 +586,7 @@ impl App {
             // Les coeurs tremblent quand la vie est basse.
             let shake = if self.hp <= 6.0 { ((self.clock * 14.0 + i as f32 * 1.7).sin() * s).round() } else { 0.0 };
             let x = bx + i as f32 * 8.0 * s;
-            ui.tile(x, iy + shake, 8.0 * s, t::HEART_EMPTY, 1.0, WHITE);
+            ui.hud(x, iy + shake, s, t::HEART_EMPTY, 0, 9, WHITE);
             let fill = ((self.hp - i as f32 * 2.0) / 2.0).clamp(0.0, 1.0);
             if fill > 0.0 {
                 // Empoisonne : les coeurs virent au vert.
@@ -598,22 +598,26 @@ impl App {
                 } else {
                     WHITE
                 };
-                ui.tile(x, iy + shake, 8.0 * s, t::HEART, if fill < 1.0 { 0.5 } else { 1.0 }, tint);
+                ui.hud(x, iy + shake, s, t::HEART, 0, if fill < 1.0 { 5 } else { 9 }, tint);
             }
             let fx = bx + 9.0 * cell - 8.0 * s - i as f32 * 8.0 * s;
-            ui.tile(fx, iy, 8.0 * s, t::FOOD_EMPTY, 1.0, WHITE);
+            ui.hud(fx, iy, s, t::FOOD_EMPTY, 0, 9, WHITE);
             let fill = ((self.hunger - i as f32 * 2.0) / 2.0).clamp(0.0, 1.0);
             if fill > 0.0 {
                 // Nausee : les onigiris verdissent.
                 let tint = if self.effects & 2 != 0 { [0.7, 0.85, 0.4, 1.0] } else { WHITE };
-                ui.tile(fx, iy, 8.0 * s, t::FOOD, if fill < 1.0 { 0.5 } else { 1.0 }, tint);
+                if fill < 1.0 {
+                    ui.hud(fx, iy, s, t::FOOD, 4, 5, tint);
+                } else {
+                    ui.hud(fx, iy, s, t::FOOD, 0, 9, tint);
+                }
             }
         }
         // Bulles d'air sous l'eau.
         if self.air < 10.0 && mortal {
             for i in 0..self.air.ceil().max(0.0) as usize {
                 let x = bx + 9.0 * cell - 8.0 * s - i as f32 * 8.0 * s;
-                ui.tile(x, iy - 10.0 * s, 8.0 * s, t::BUBBLE, 1.0, WHITE);
+                ui.hud(x, iy - 10.0 * s, s, t::BUBBLE, 0, 9, WHITE);
             }
         }
         if self.name_t > 0.0 {

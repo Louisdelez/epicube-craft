@@ -1,4 +1,0 @@
-DotGothic16 (DotGothic16-Regular.ttf)
-Copyright 2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16)
-Distribuee sous la SIL Open Font License, version 1.1 : voir OFL-DotGothic16.txt
-Source : https://github.com/google/fonts/tree/main/ofl/dotgothic16

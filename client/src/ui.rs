@@ -90,6 +90,23 @@ impl Ui {
         self.quad(x.floor(), y.floor(), (size * frac).floor(), size.floor(), [u, v, u + e * frac, v + e], color);
     }
 
+    /// Icone du HUD (coeur, onigiri, cuirasse, bulle) : 9 x 9 points, un point par unite d'interface.
+    /// `from`, `count` : colonnes a dessiner, pour n'en montrer que la moitie.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hud(&mut self, x: f32, y: f32, s: f32, tile: u16, from: usize, count: usize, color: [f32; 4]) {
+        let (u, v) = tile_uv(tile);
+        let dot = crate::pixels::HUD_PX as f32 / crate::atlas::AT as f32;
+        let (from, count) = (from as f32, count as f32);
+        self.quad(
+            x.floor() + from * s,
+            y.floor(),
+            count * s,
+            crate::pixels::HUD_DOTS as f32 * s,
+            [u + from * dot, v, u + (from + count) * dot, v + crate::pixels::HUD_DOTS as f32 * dot],
+            color,
+        );
+    }
+
     /// Bloc vu en perspective : dessus, face gauche et face droite.
     fn cube(&mut self, x: f32, y: f32, size: f32, b: u8) {
         let e = 1.0 / 32.0;
@@ -137,13 +154,10 @@ impl Ui {
         }
     }
 
-    /// Nombre de pixels d'ecran par point de la police, pour l'echelle `scale`.
-    /// Toujours entier : les lettres restent nettes. La police fait 16 points de haut et les appelants
-    /// prevoient une ligne de 8 x echelle : on arrondit donc vers le bas. A une echelle impaire, les
-    /// lettres sont un peu plus petites que leur ligne, mais elles n'en debordent jamais (arrondir au
-    /// plus proche les faisait depasser d'un tiers : lignes qui se chevauchent, texte coupe et decale).
+    /// Nombre de pixels d'ecran par point de la police, pour l'echelle `scale` : un point de police vaut
+    /// une unite d'interface, donc toujours un nombre entier de pixels. Les lettres restent nettes.
     fn font_k(scale: f32) -> f32 {
-        (scale / 2.0).floor().max(1.0)
+        scale.round().max(1.0)
     }
 
     pub fn text_width(s: &str, scale: f32) -> f32 {
@@ -161,15 +175,22 @@ impl Ui {
         }
     }
 
-    /// Texte en police a points, cerne d'encre, lisible sur tous les fonds.
+    /// Texte en police a points, avec son ombre portee : lisible sur tous les fonds, sans empater les lettres.
     pub fn text(&mut self, x: f32, y: f32, scale: f32, s: &str, color: [f32; 4]) {
+        self.text_shadowed(x, y, scale, s, color, Self::font_k(scale));
+    }
+
+    /// Grand titre : memes lettres, mais une ombre fine (`shade` pixels), qui ne noie pas les lettres voisines.
+    pub fn title(&mut self, x: f32, y: f32, scale: f32, shade: f32, s: &str, color: [f32; 4]) {
+        self.text_shadowed(x, y, scale, s, color, shade.round().max(1.0));
+    }
+
+    fn text_shadowed(&mut self, x: f32, y: f32, scale: f32, s: &str, color: [f32; 4], shade: f32) {
         let k = Self::font_k(scale);
         // La ligne de 16 points est centree sur la hauteur prevue par les appelants (8 x echelle).
         let (x, y) = (x.floor(), (y + (8.0 * scale - FONT_PX * k) / 2.0).floor());
-        let ink = [INK[0], INK[1], INK[2], color[3]];
-        for (dx, dy) in [(-k, 0.0), (k, 0.0), (0.0, -k), (0.0, k), (-k, -k), (k, -k), (-k, k), (k, k)] {
-            self.glyphs(x + dx, y + dy, k, s, ink);
-        }
+        // Ombre d'un point de police, en bas a droite, dans la couleur du texte assombrie.
+        self.glyphs(x + shade, y + shade, k, s, [color[0] * 0.22, color[1] * 0.22, color[2] * 0.24, color[3]]);
         self.glyphs(x, y, k, s, color);
     }
 }

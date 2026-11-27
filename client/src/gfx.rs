@@ -574,17 +574,17 @@ impl Gfx {
     /// de la fenetre, et l'on gagne aussi sur la presentation de l'image. Windows et Linux n'etirent pas
     /// une surface plus petite que sa fenetre : la, seule la scene 3D est calculee en petit, puis agrandie
     /// par le jeu, et l'interface reste a la resolution de l'ecran.
-    pub fn set_res(&mut self, res: f32) {
+    /// `whole` : rapetisser la surface entiere (interface comprise), ce que seul macOS sait etirer.
+    pub fn set_res(&mut self, res: f32, whole: bool) {
         let res = res.clamp(0.25, 1.0);
-        if cfg!(target_os = "macos") {
-            if (res - self.res).abs() > 1e-3 {
-                self.res = res;
-                let (w, h) = self.win;
-                self.resize(w, h);
-            }
-        } else {
-            self.set_scale(res);
+        let surface = if whole && cfg!(target_os = "macos") { res } else { 1.0 };
+        if (surface - self.res).abs() > 1e-3 {
+            self.res = surface;
+            let (w, h) = self.win;
+            self.resize(w, h);
         }
+        // La scene est calculee a `res` fois la fenetre : dans une surface deja rapetissee, il n'y a plus rien a reduire.
+        self.set_scale((res / surface).min(1.0));
     }
 
     pub fn res(&self) -> f32 {

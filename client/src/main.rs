@@ -9,6 +9,7 @@ mod assets;
 mod atlas;
 mod audio;
 mod chatbox;
+mod font;
 mod sounds;
 mod gfx;
 mod hud;
@@ -2228,7 +2229,7 @@ impl Shell {
         self.voice_frame(inp);
         // Parametres modifies : on les applique et on les enregistre une fois le curseur relache.
         // La resolution suit l'ecran ou se trouve la fenetre (sa densite peut changer en passant de l'un a l'autre).
-        gfx.set_res(self.settings.res_scale(window.scale_factor()));
+        gfx.set_res(self.settings.res_scale(window.scale_factor()), self.settings.lowres);
         // Le moteur graphique regle a nouveau le filtre de la couche chaque fois qu'il la reconfigure :
         // on le remet a chaque image (quelques appels, sans cout mesurable).
         crisp_scaling(window);

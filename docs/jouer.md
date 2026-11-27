@@ -123,7 +123,8 @@ En jeu, le nom de chaque joueur qui parle s'affiche en haut à droite. Un casque
 - **Paramètres** : distance de vue (4 à 12 chunks), champ de vision, sensibilité de la souris, taille de l'interface, plein écran, nuages, balancement de la caméra, contours à l'encre.
 - **Son** : volume général, musique, bruitages, ambiance, voix des joueurs, micro.
 - **Performances** :
-  - *Résolution* : `auto` dessine à la résolution de l'écran sans sa haute densité (le plus rapide) ; `100 %` rétablit le rendu natif.
+  - *Résolution* : celle de la scène 3D. `auto` la calcule à la résolution de l'écran sans sa haute densité ; `100 %` rétablit le rendu natif.
+  - *Interface basse résolution* (macOS) : dessine aussi l'interface en basse résolution, ce qui est bien plus rapide. Le texte garde la même taille et la même netteté.
   - *Images par seconde* : limite réglable de 30 à 240, ou illimitées.
   - *Synchro verticale* : à couper pour dépasser la fréquence de l'écran.
 

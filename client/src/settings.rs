@@ -25,6 +25,9 @@ pub struct Settings {
     pub lan: bool,
     /// Resolution d'affichage : 0 = automatique (celle de l'ecran, divisee par sa densite), sinon 50, 75 ou 100 %.
     pub res: u32,
+    /// macOS : dessiner aussi l'interface en basse resolution, que le systeme agrandit. Plus rapide,
+    /// mais le texte et l'interface sont faits de plus gros pixels.
+    pub lowres: bool,
     /// Images par seconde au plus ; 0 = sans limite.
     pub fps_max: u32,
     /// Micro : 0 = coupe, 1 = appuyer sur V pour parler, 2 = declenchement par la voix, 3 = ouvert en permanence.
@@ -55,6 +58,7 @@ impl Default for Settings {
             ink: true,
             lan: false,
             res: 0,
+            lowres: true,
             fps_max: 0,
             mic: 0,
             mic_gate: 0.02,
@@ -93,6 +97,7 @@ impl Settings {
                 "contours" => s.ink = flag,
                 "reseau_local" => s.lan = flag,
                 "resolution" => s.res = v.parse().ok().filter(|r| [0, 50, 75, 100].contains(r)).unwrap_or(0),
+                "interface_basse_resolution" => s.lowres = flag,
                 "images_max" => s.fps_max = v.parse().unwrap_or(0).min(1000),
                 "micro" => s.mic = v.parse().unwrap_or(0).min(3),
                 "seuil_micro" => s.mic_gate = v.parse().unwrap_or(s.mic_gate).clamp(0.002, 0.2),
@@ -111,7 +116,7 @@ impl Settings {
 
     pub fn save(&self) {
         let text = format!(
-            "vue={}\nchamp={}\nsensibilite={}\ninterface={}\nvsync={}\nplein_ecran={}\nnuages={}\nbalancement={}\ncontours={}\nreseau_local={}\nresolution={}\nimages_max={}\nmicro={}\nseuil_micro={}\nvoix={}\nvolume={}\nmusique={}\nbruitages={}\nambiance={}\npseudo={}\nadresse={}\n",
+            "vue={}\nchamp={}\nsensibilite={}\ninterface={}\nvsync={}\nplein_ecran={}\nnuages={}\nbalancement={}\ncontours={}\nreseau_local={}\nresolution={}\ninterface_basse_resolution={}\nimages_max={}\nmicro={}\nseuil_micro={}\nvoix={}\nvolume={}\nmusique={}\nbruitages={}\nambiance={}\npseudo={}\nadresse={}\n",
             self.view,
             self.fov,
             self.sens,
@@ -123,6 +128,7 @@ impl Settings {
             self.ink as u8,
             self.lan as u8,
             self.res,
+            self.lowres as u8,
             self.fps_max,
             self.mic,
             self.mic_gate,

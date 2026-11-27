@@ -65,4 +65,4 @@ Le jeu est développé et joué sur macOS. Le code compile pour Windows et Linux
 
 - **Code** : [MIT](LICENSE).
 - **Sons et musiques** : domaine public (CC0), sources et auteurs dans [audio/CREDITS.md](audio/CREDITS.md).
-- **Police** : DotGothic16, sous [SIL Open Font License 1.1](client/fonts/OFL-DotGothic16.txt).
+- **Police** : dessinée pour le jeu, sous la même licence que le code.

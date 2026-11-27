@@ -2281,21 +2281,82 @@ const MOON_DISC_PAL: &Pal = &[('k', 0xAAB4CC), ('m', 0xE6ECF8), ('c', 0xC4CDE2)]
 
 // ---------------------------------------------------------------- icones de l'interface (8 x 8)
 
-const HEART: [&str; 8] = [".kk..kk.", "krrkkrrk", "krhrrrrk", "krrrrrrk", ".krrrrk.", "..krrk..", "...kk...", "........"];
-const HEART_PAL: &Pal = &[('k', 0x1E1830), ('r', 0xD8322A), ('h', 0xFFB0A0)];
-const HEART_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('r', 0x3A2E4A), ('h', 0x3A2E4A)];
+/// Icones de la barre de vie, de faim, d'armure et de souffle : 9 x 9 points, sur la meme grille que la
+/// police (un point = une unite d'interface). Elles se chevauchent d'un point quand on les aligne.
+pub const HUD_DOTS: usize = 9;
+/// Pixels d'atlas par point d'une icone.
+pub const HUD_PX: usize = 7;
 
-/// Cuirasse de la barre d'armure.
-const CUIRASS: [&str; 8] = [".kk..kk.", "kaakkaak", "kahaaaak", ".kaaaak.", ".kllllk.", ".kaaaak.", ".kllllk.", "..kkkk.."];
+/// Coeur : deux lobes ronds, une pointe nette, un reflet en haut a gauche et l'ombre a droite.
+const HEART: [&str; 9] = [
+    ".kk...kk.",
+    "kRRk.kRrk",
+    "kRwrkrrrk",
+    "kRrrrrrdk",
+    "krrrrrrdk",
+    ".krrrrdk.",
+    "..krrdk..",
+    "...kdk...",
+    "....k....",
+];
+const HEART_PAL: &Pal = &[('k', 0x1E1830), ('r', 0xE0352E), ('R', 0xFF6A5A), ('w', 0xFFE4DC), ('d', 0xA01E2A)];
+const HEART_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('r', 0x3A2E4A), ('R', 0x3A2E4A), ('w', 0x4A3C5C), ('d', 0x2E2440)];
+
+/// Onigiri : boulette de riz en triangle et sa bande d'algue.
+const ONIGIRI: [&str; 9] = [
+    "....k....",
+    "...kwk...",
+    "..kwwsk..",
+    "..kwwsk..",
+    ".kwwwwsk.",
+    ".kwnnnsk.",
+    "kwwnnnwsk",
+    "kwwnnnwsk",
+    ".kkkkkkk.",
+];
+const ONIGIRI_PAL: &Pal = &[('k', 0x1E1830), ('w', 0xF6F2E8), ('s', 0xC9C2B4), ('n', 0x26402C)];
+const ONIGIRI_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('w', 0x3A2E4A), ('s', 0x2E2440), ('n', 0x241C34)];
+
+/// Cuirasse de la barre d'armure : epaules, plastron et ses deux rangs de lacage.
+const CUIRASS: [&str; 9] = [
+    "kk.....kk",
+    "kakkkkkak",
+    "kahaaaaak",
+    ".kaaaaak.",
+    ".klllllk.",
+    ".kaaaaak.",
+    ".klllllk.",
+    ".kaaaaak.",
+    "..kkkkk..",
+];
 const CUIRASS_PAL: &Pal = &[('k', 0x1E1830), ('a', 0xAEB6C8), ('h', 0xF2F4F8), ('l', 0xC0362C)];
-const CUIRASS_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('a', 0x3A2E4A), ('h', 0x3A2E4A), ('l', 0x3A2E4A)];
+const CUIRASS_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('a', 0x3A2E4A), ('h', 0x4A3C5C), ('l', 0x2E2440)];
 
-/// Onigiri : boulette de riz et sa bande d'algue.
-const ONIGIRI: [&str; 8] = ["...kk...", "..kwwk..", ".kwwwwk.", ".kwwwwk.", "kwwnnwwk", "kwwnnwwk", "kwwnnwwk", ".kkkkkk."];
-const ONIGIRI_PAL: &Pal = &[('k', 0x1E1830), ('w', 0xF2EEE4), ('n', 0x2A3A2A)];
-const ONIGIRI_EMPTY_PAL: &Pal = &[('k', 0x1E1830), ('w', 0x3A2E4A), ('n', 0x2A2238)];
+/// Bulle d'air.
+const BUBBLE: [&str; 9] = [
+    ".........",
+    "...kkk...",
+    "..kbbbk..",
+    ".kbhbbbk.",
+    ".kbbbbbk.",
+    ".kbbbbbk.",
+    "..kbbbk..",
+    "...kkk...",
+    ".........",
+];
 
-const BUBBLE: [&str; 8] = ["..kkkk..", ".kbbbbk.", "kbhbbbbk", "kbbbbbbk", "kbbbbbbk", "kbbbbbbk", ".kbbbbk.", "..kkkk.."];
+/// Peint une icone du HUD dans le coin haut-gauche de sa tuile, a HUD_PX pixels par point.
+fn hud_icon(img: &mut Img, tile: u16, rows: &[&str; 9], pal: &Pal) {
+    let (ox, oy) = ((tile as usize % 32) * TILE, (tile as usize / 32) * TILE);
+    for y in 0..TILE {
+        for x in 0..TILE {
+            let ch = rows.get(y / HUD_PX).and_then(|r| r.chars().nth(x / HUD_PX)).unwrap_or('.');
+            let c = if ch == '.' { [0; 4] } else { let v = color(pal, ch); [(v >> 16) as u8, (v >> 8) as u8, v as u8, 255] };
+            img.set_px(ox + x, oy + y, c);
+        }
+    }
+}
+
 const BUBBLE_PAL: &Pal = &[('k', 0x1E1830), ('b', 0x6FAEEA), ('h', 0xE4F2FF)];
 
 // ---------------------------------------------------------------- objets (16 x 16)
@@ -3031,13 +3092,13 @@ pub fn paint(img: &mut Img) {
     }
 
     // ---- Icones de l'interface.
-    Canvas::icon(&CUIRASS, CUIRASS_PAL).blit(img, t::ARMOR, 255);
-    Canvas::icon(&CUIRASS, CUIRASS_EMPTY_PAL).blit(img, t::ARMOR_EMPTY, 255);
-    Canvas::icon(&HEART, HEART_PAL).blit(img, t::HEART, 255);
-    Canvas::icon(&HEART, HEART_EMPTY_PAL).blit(img, t::HEART_EMPTY, 255);
-    Canvas::icon(&ONIGIRI, ONIGIRI_PAL).blit(img, t::FOOD, 255);
-    Canvas::icon(&ONIGIRI, ONIGIRI_EMPTY_PAL).blit(img, t::FOOD_EMPTY, 255);
-    Canvas::icon(&BUBBLE, BUBBLE_PAL).blit(img, t::BUBBLE, 255);
+    hud_icon(img, t::ARMOR, &CUIRASS, CUIRASS_PAL);
+    hud_icon(img, t::ARMOR_EMPTY, &CUIRASS, CUIRASS_EMPTY_PAL);
+    hud_icon(img, t::HEART, &HEART, HEART_PAL);
+    hud_icon(img, t::HEART_EMPTY, &HEART, HEART_EMPTY_PAL);
+    hud_icon(img, t::FOOD, &ONIGIRI, ONIGIRI_PAL);
+    hud_icon(img, t::FOOD_EMPTY, &ONIGIRI, ONIGIRI_EMPTY_PAL);
+    hud_icon(img, t::BUBBLE, &BUBBLE, BUBBLE_PAL);
 
     // ---- Outils : cinq formes, quatre matieres.
     let tiers = [(0xB8935B, 0xDDBB82), (0x8A919C, 0xB6BCC6), (0xC8CED8, 0xF2F4F8), (0x4FD6CF, 0xB8F5EE)];

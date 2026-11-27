@@ -152,8 +152,8 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
 
     let title = |wd: &mut W, text: &str, y: f32, scale: f32| {
         let tw = Ui::text_width(text, scale);
-        wd.ui.text(((w - tw) / 2.0).floor() + scale, y + scale, scale, text, [0.0, 0.0, 0.0, 0.5]);
-        wd.ui.text(((w - tw) / 2.0).floor(), y, scale, text, [1.0, 0.86, 0.36, 1.0]);
+        // Une ombre fine : a cette taille, l'ombre d'un point entier empaterait le titre.
+        wd.ui.title(((w - tw) / 2.0).floor(), y, scale, scale / 3.0, text, [1.0, 0.86, 0.36, 1.0]);
     };
 
     match sh.screen {
@@ -183,8 +183,8 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.9", GREY);
         }
         Screen::Solo => {
-            title(&mut wd, "Monde", (h * 0.1).floor(), 3.0 * s);
-            let mut y = (h * 0.27).floor();
+            title(&mut wd, "Monde", (h * 0.06).floor(), 3.0 * s);
+            let mut y = (h * 0.22).floor();
             if wd.field(x, y, bw, bh, "Nom du monde", &sh.world, sh.field == 1, blink) {
                 sh.field = 1;
             }
@@ -206,13 +206,13 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     sh.new_mode = (sh.new_mode + 1) % 5;
                 }
                 y += bh + gap;
-                let half = (bw / 2.0 - 2.0 * s).floor();
                 let diff = shared::rules::difficulty_name(if extreme { shared::rules::HARD } else { sh.new_difficulty });
-                if wd.button(x, y, half, bh, &format!("Difficulté : {diff}")) && !extreme {
+                if wd.button(x, y, bw, bh, &format!("Difficulté : {diff}")) && !extreme {
                     sh.new_difficulty = (sh.new_difficulty + 1) % 4;
                 }
+                y += bh + gap;
                 let cheats = !extreme && sh.new_cheats;
-                if wd.button(x + bw - half, y, half, bh, &format!("Triche : {}", if cheats { "oui" } else { "non" })) && !extreme {
+                if wd.button(x, y, bw, bh, &format!("Triche : {}", if cheats { "oui" } else { "non" })) && !extreme {
                     sh.new_cheats = !sh.new_cheats;
                 }
                 y += bh + 4.0 * s;
@@ -358,17 +358,23 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 let mut v = (st.view - 4) as f32 / 8.0;
                 wd.slider(9, xm, row(3.0), cw, bh, &format!("Distance de vue : {} chunks", st.view), &mut v, &mut sh.drag);
                 st.view = 4 + (v * 8.0).round() as i32;
+                let lines_at = if cfg!(target_os = "macos") {
+                    wd.toggle(xm, row(4.0), cw, bh, "Interface basse résolution", &mut st.lowres);
+                    5.0
+                } else {
+                    4.0
+                };
                 for (k, line) in [
                     "Pour dépasser la fréquence de l'écran : synchro verticale sur non.",
-                    "Résolution auto : celle de l'écran sans sa haute densité (le plus rapide).",
-                    "Le plein écran est souvent plus rapide que la fenêtre. F3 affiche la cadence.",
+                    "Résolution : celle de la scène 3D. Le texte reste net dans tous les cas.",
+                    "Interface basse résolution (Mac) : bien plus rapide, pour le même texte.",
                 ]
                 .into_iter()
                 .enumerate()
                 {
-                    wd.ui.text(x1, row(4.0) + 4.0 * s + k as f32 * 10.0 * s, s, line, GREY);
+                    wd.ui.text(x1, row(lines_at) + 4.0 * s + k as f32 * 10.0 * s, s, line, GREY);
                 }
-                if wd.button(x, row(6.0) + 2.0 * s, bw, bh, "Retour") {
+                if wd.button(x, row(lines_at + 2.0) + 2.0 * s, bw, bh, "Retour") {
                     sh.perf_page = false;
                 }
                 return action;
@@ -431,8 +437,8 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             }
         }
         Screen::Pause => {
-            title(&mut wd, "Pause", (h * 0.2).floor(), 3.0 * s);
-            let mut y = (h * 0.42).floor();
+            title(&mut wd, "Pause", (h * 0.14).floor(), 3.0 * s);
+            let mut y = (h * 0.34).floor();
             if wd.button(x, y, bw, bh, "Reprendre") {
                 sh.screen = Screen::Game;
             }
@@ -443,12 +449,12 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             y += bh + gap;
             // Regles de la partie : la difficulte se change ici ; le mode de jeu, si le monde l'autorise.
             if let Some(g) = sh.game.as_mut() {
-                let half = (bw / 2.0 - 2.0 * s).floor();
-                if wd.button(x, y, half, bh, &format!("Mode : {}", shared::rules::mode_name(g.mode))) {
+                if wd.button(x, y, bw, bh, &format!("Mode de jeu : {}", shared::rules::mode_name(g.mode))) {
                     g.cycle_mode();
                 }
+                y += bh + gap;
                 let diff = shared::rules::difficulty_name(g.rules.difficulty);
-                if wd.button(x + bw - half, y, half, bh, &format!("Difficulté : {diff}")) {
+                if wd.button(x, y, bw, bh, &format!("Difficulté : {diff}")) {
                     g.cycle_difficulty();
                 }
                 y += bh + gap;
