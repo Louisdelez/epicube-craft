@@ -138,9 +138,12 @@ impl Ui {
     }
 
     /// Nombre de pixels d'ecran par point de la police, pour l'echelle `scale`.
-    /// Toujours entier : les lettres restent nettes.
+    /// Toujours entier : les lettres restent nettes. La police fait 16 points de haut et les appelants
+    /// prevoient une ligne de 8 x echelle : on arrondit donc vers le bas. A une echelle impaire, les
+    /// lettres sont un peu plus petites que leur ligne, mais elles n'en debordent jamais (arrondir au
+    /// plus proche les faisait depasser d'un tiers : lignes qui se chevauchent, texte coupe et decale).
     fn font_k(scale: f32) -> f32 {
-        (scale / 2.0).round().max(1.0)
+        (scale / 2.0).floor().max(1.0)
     }
 
     pub fn text_width(s: &str, scale: f32) -> f32 {

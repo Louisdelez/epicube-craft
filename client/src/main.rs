@@ -2229,6 +2229,9 @@ impl Shell {
         // Parametres modifies : on les applique et on les enregistre une fois le curseur relache.
         // La resolution suit l'ecran ou se trouve la fenetre (sa densite peut changer en passant de l'un a l'autre).
         gfx.set_res(self.settings.res_scale(window.scale_factor()));
+        // Le moteur graphique regle a nouveau le filtre de la couche chaque fois qu'il la reconfigure :
+        // on le remet a chaque image (quelques appels, sans cout mesurable).
+        crisp_scaling(window);
         if self.settings != self.applied && self.drag.is_none() {
             gfx.set_vsync(self.settings.vsync);
             if self.settings.fullscreen != self.applied.fullscreen {
@@ -2342,6 +2345,42 @@ fn ensure_vulkan_loader() {
 #[cfg(not(target_os = "macos"))]
 fn ensure_vulkan_loader() {}
 
+/// macOS : quand le jeu dessine plus petit que la fenetre (reglage « Resolution »), le systeme agrandit
+/// l'image. Par defaut il la lisse, ce qui rend le texte et le pixel art flous ; on lui demande de
+/// repeter les pixels tels quels. A la resolution « auto » d'un ecran a haute densite, chaque pixel du
+/// jeu couvre exactement deux pixels d'ecran sur deux : l'image est aussi nette qu'en resolution native.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)] // les macros d'objc testent une option de clippy que ce paquet ne declare pas
+fn crisp_scaling(window: &Window) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else { return };
+    let Ok(name) = std::ffi::CString::new("nearest") else { return };
+    // La couche d'affichage est celle de la vue, ou l'une de ses sous-couches selon le moteur graphique.
+    unsafe {
+        let view = appkit.ns_view.as_ptr() as *mut Object;
+        let filter: *mut Object = msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()];
+        let layer: *mut Object = msg_send![view, layer];
+        if layer.is_null() || filter.is_null() {
+            return;
+        }
+        let _: () = msg_send![layer, setMagnificationFilter: filter];
+        let subs: *mut Object = msg_send![layer, sublayers];
+        if !subs.is_null() {
+            let n: usize = msg_send![subs, count];
+            for i in 0..n {
+                let sub: *mut Object = msg_send![subs, objectAtIndex: i];
+                let _: () = msg_send![sub, setMagnificationFilter: filter];
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn crisp_scaling(_window: &Window) {}
+
 /// Le jeu lit ses sons, ses ressources et ses sauvegardes dans le dossier courant. Lance d'un double
 /// clic, ce dossier depend du systeme (le dossier personnel, la racine du disque...) : s'il ne contient
 /// pas les donnees du jeu, on se place a cote de l'executable, ou dans le projet qui l'a compile.
@@ -2376,6 +2415,10 @@ fn attach_parent_console() {
 fn attach_parent_console() {}
 
 fn main() {
+    // MoltenVK (Vulkan sur macOS) : agrandir l'image sans la lisser. Lu a la creation du moteur graphique.
+    if cfg!(target_os = "macos") && std::env::var_os("MVK_CONFIG_SWAPCHAIN_MIN_MAG_FILTER_USE_NEAREST").is_none() {
+        std::env::set_var("MVK_CONFIG_SWAPCHAIN_MIN_MAG_FILTER_USE_NEAREST", "1");
+    }
     attach_parent_console();
     enter_data_dir();
     let args: Vec<String> = std::env::args().collect();
@@ -2456,6 +2499,7 @@ fn main() {
             .expect("fenetre"),
     );
     let mut gfx = Gfx::new(window.clone(), &img.0);
+    crisp_scaling(&window);
     gfx.set_vsync(settings.vsync);
     if settings.fullscreen {
         window.set_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -2525,7 +2569,10 @@ fn main() {
                         shell.stop_local();
                         elwt.exit();
                     }
-                    WindowEvent::Resized(s) => gfx.resize(s.width, s.height),
+                    WindowEvent::Resized(s) => {
+                        gfx.resize(s.width, s.height);
+                        crisp_scaling(&window);
+                    }
                     WindowEvent::Focused(false) => {
                         if shell.screen == Screen::Game && !shell.showcase {
                             shell.screen = Screen::Pause;

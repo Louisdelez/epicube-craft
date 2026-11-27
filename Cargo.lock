@@ -430,6 +430,7 @@ dependencies = [
  "env_logger",
  "fontdue",
  "glam",
+ "objc",
  "png",
  "pollster",
  "rodio",
