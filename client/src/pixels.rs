@@ -434,24 +434,6 @@ const FARMLAND_PAL: &Pal = &[('a', 0x3E2A1E), ('b', 0x553A2A), ('c', 0x6B4A36)];
 
 // ---------------------------------------------------------------- eau, lave, minerais
 
-const WATER: Map = [
-    "bbbbbbbbbbbbbbbb",
-    "bbccbbbbbbbbbbbb",
-    "bcddcbbbbbbccbbb",
-    "bbbbbbbbbbcddcbb",
-    "abbbbbbbbbbbbbba",
-    "aabbbbbbaabbbbbb",
-    "bbbbbbbaaaabbbbb",
-    "bbbbbbbbbbbbbbbb",
-    "bbbbbbbccbbbbbbb",
-    "bbbbbbcddcbbbbbb",
-    "ccbbbbbbbbbbbbbc",
-    "dcbbbbbbbbbbbbcd",
-    "bbbbbbbbbbbbbbbb",
-    "bbbaabbbbbbbaabb",
-    "bbaaaabbbbbaaaab",
-    "bbbbbbbbbbbbbbbb",
-];
 const WATER_PAL: &Pal = &[('a', 0x2F6FC0), ('b', 0x3F86D6), ('c', 0x6FAEEA), ('d', 0xA8D4F6)];
 
 const LAVA: Map = [
@@ -1533,6 +1515,31 @@ fn drawn(wrap: bool, f: impl Fn(f32, f32) -> u32) -> Canvas {
         }
     }
     Canvas { px, wrap, locked: Vec::new() }
+}
+
+/// Eau : des rides claires et des creux sombres qui ondulent d'un bord a l'autre de la tuile.
+/// Tout est fait de sinus dont la periode divise la tuile : le dessin se prolonge sans couture dans
+/// les blocs voisins, et aucune tache isolee ne trahit la grille des blocs.
+fn water() -> Canvas {
+    use std::f32::consts::TAU;
+    let [deep, base, light, glint] = ['a', 'b', 'c', 'd'].map(|ch| color(WATER_PAL, ch));
+    drawn(true, move |x, y| {
+        let (u, v) = (x / N as f32, y / N as f32);
+        // Trois rides par tuile, dont la ligne serpente ; une seconde famille, plus lache, les croise.
+        let ride = (TAU * (3.0 * v + 0.16 * (TAU * (u + 0.2)).sin() + 0.07 * (TAU * (2.0 * u + v)).sin())).sin();
+        let houle = (TAU * (2.0 * v - u + 0.12 * (TAU * 2.0 * u).sin())).sin();
+        // Les cretes ne brillent que par endroits, les creux ne s'assombrissent qu'ailleurs.
+        let eclat = (TAU * (2.0 * u + v) + 1.3 * (TAU * v).sin()).sin();
+        if ride > 0.93 && eclat > 0.35 {
+            glint
+        } else if ride > 0.8 && eclat > -0.15 {
+            light
+        } else if houle < -0.9 && eclat < 0.1 {
+            deep
+        } else {
+            base
+        }
+    })
 }
 
 /// Virage de rail qui relie le bord droit au bord du bas : deux arcs autour du coin.
@@ -2813,7 +2820,7 @@ pub fn paint(img: &mut Img) {
     Canvas::tiled(&FARMLAND, FARMLAND_PAL).sprinkle(&["c"], FARMLAND_PAL, 18, 67).sprinkle(&["a"], FARMLAND_PAL, 18, 68).blit(img, t::FARMLAND, 255);
 
     // ---- Fluides et minerais.
-    Canvas::tiled(&WATER, WATER_PAL).sprinkle(&["d"], WATER_PAL, 8, 71).sprinkle(&["cc"], WATER_PAL, 8, 72).blit(img, t::WATER, 200);
+    water().blit(img, t::WATER, 200);
     let molten = |pal: &Pal, seed: u32| Canvas::tiled(&LAVA, pal).sprinkle(&["d"], pal, 12, seed).sprinkle(&["a"], pal, 12, seed + 1);
     molten(LAVA_PAL, 73).blit(img, t::LAVA, 255);
     molten(EMBER_PAL, 75).blit(img, t::EMBER, 255);
