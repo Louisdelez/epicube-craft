@@ -39,6 +39,16 @@ Chaque dossier contient le jeu, le serveur dédié, les sons et un fichier `LISE
 
 Un exécutable se compile sur le système auquel il est destiné. La recette `.github/workflows/build.yml` le fait automatiquement sur les trois systèmes à chaque envoi sur GitHub : elle lance les tests, empaquette, et publie les archives comme *artifacts* de l'exécution.
 
+Pour publier une version, posez une étiquette et envoyez-la : la recette ajoute les archives des trois systèmes à la release du même nom.
+
+```bash
+git tag v0.9.1
+```
+
+```bash
+git push origin v0.9.1
+```
+
 ## Tests
 
 ```bash

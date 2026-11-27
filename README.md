@@ -24,7 +24,7 @@ Le jeu tourne sur **macOS, Linux et Windows**, en solo ou à plusieurs, avec un 
 
 ## Jouer
 
-Téléchargez l'archive de votre système depuis la page des [exécutions GitHub Actions](../../actions) (dans une exécution réussie, section *Artifacts*), décompressez-la et lancez `epicube-craft`. Le dossier `audio` doit rester à côté de l'exécutable.
+Téléchargez l'archive de votre système depuis la page des [versions](../../releases/latest), décompressez-la et lancez `epicube-craft`. Le dossier `audio` doit rester à côté de l'exécutable.
 
 | Système | Ce qu'il faut |
 |---|---|
