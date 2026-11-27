@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["shared", "server", "client"]
+
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+# Optimisation a l'echelle du programme entier : compilation plus longue, executable plus rapide.
+lto = "fat"
+codegen-units = 1

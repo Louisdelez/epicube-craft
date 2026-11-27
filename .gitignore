@@ -1,0 +1,12 @@
+# Produits de compilation et versions empaquetees
+target/
+dist/
+
+# Donnees du joueur : mondes et reglages
+saves/
+epicube-craft.cfg
+voxterra.cfg
+
+# Systeme
+.DS_Store
+Thumbs.db

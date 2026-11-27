@@ -1,0 +1,38 @@
+# Compile, teste et empaquette Epicube Craft sur macOS, Linux et Windows.
+# Se lance a chaque envoi sur GitHub ; les archives se telechargent depuis la page de l'execution.
+name: Compilation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Bibliotheques systeme (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev
+      - name: Tests
+        run: cargo test --workspace
+      - name: Empaquetage (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: sh scripts/empaqueter.sh
+      - name: Empaquetage (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/empaqueter.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: epicube-craft-${{ runner.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
