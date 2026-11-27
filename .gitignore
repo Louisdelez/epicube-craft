@@ -7,6 +7,10 @@ saves/
 epicube-craft.cfg
 voxterra.cfg
 
+# Reglages et cles d'essai des comptes, propres a chaque machine
+comptes.txt
+*.cle
+
 # Systeme
 .DS_Store
 Thumbs.db

@@ -124,7 +124,7 @@ impl Chat {
 }
 
 /// Coupe un texte en lignes qui tiennent dans `width`, aux espaces de preference.
-fn wrap(text: &str, s: f32, width: f32) -> Vec<String> {
+pub fn wrap(text: &str, s: f32, width: f32) -> Vec<String> {
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
         let cur = lines.last_mut().unwrap();

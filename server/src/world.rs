@@ -403,6 +403,12 @@ impl World {
         }
     }
 
+    /// Sauvegarde d'un joueur, rangee sous l'identifiant de son compte.
+    pub fn player_file(&self, account: &shared::account::Id) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join("joueurs").join(format!("{}.bin", shared::account::format_id(account))))
+    }
+
+    /// Ancien emplacement, du temps ou un joueur n'etait connu que par son pseudo.
     pub fn player_path(&self, name: &str) -> Option<PathBuf> {
         let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
         self.dir.as_ref().map(|d| d.join("joueurs").join(format!("{safe}.bin")))

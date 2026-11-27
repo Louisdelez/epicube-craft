@@ -11,6 +11,11 @@ path = "src/lib.rs"
 name = "epicube-craft-server"
 path = "src/main.rs"
 
+# Fabrique des cles et des jetons d'essai, en attendant le service de comptes.
+[[bin]]
+name = "epicube-craft-jeton"
+path = "src/jeton.rs"
+
 [dependencies]
 shared = { path = "../shared" }
 serde = { version = "1", features = ["derive"] }

@@ -1,4 +1,5 @@
 //! Code partage entre le client et le serveur d'Epicube Craft.
+pub mod account;
 pub mod blocks;
 pub mod chunk;
 pub mod commands;

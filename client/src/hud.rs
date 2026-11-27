@@ -697,9 +697,19 @@ impl App {
         if let Some((title, sub)) = msg {
             let s2 = s * 2.0;
             let bg = if dead { [0.45, 0.0, 0.0, 0.55] } else { [0.0, 0.0, 0.0, 0.5] };
-            ui.rect(0.0, h / 2.0 - 30.0 * s, w, 50.0 * s, bg);
-            ui.text((w - Ui::text_width(&title, s2)) / 2.0, h / 2.0 - 22.0 * s, s2, &title, WHITE);
-            ui.text((w - Ui::text_width(sub, s)) / 2.0, h / 2.0 + 4.0 * s, s, sub, [0.9, 0.9, 0.9, 1.0]);
+            // Un message court s'ecrit en grand ; un long (motif d'un refus) passe en petit, sur plusieurs lignes.
+            let (ts, lines) = if Ui::text_width(&title, s2) <= w - 16.0 * s {
+                (s2, vec![title])
+            } else {
+                (s, crate::chatbox::wrap(&title, s, w - 40.0 * s))
+            };
+            let step = if ts > s { 22.0 * s } else { 11.0 * s };
+            let top = h / 2.0 - 30.0 * s;
+            ui.rect(0.0, top, w, 28.0 * s + step * lines.len() as f32, bg);
+            for (k, line) in lines.iter().enumerate() {
+                ui.text((w - Ui::text_width(line, ts)) / 2.0, top + 8.0 * s + step * k as f32, ts, line, WHITE);
+            }
+            ui.text((w - Ui::text_width(sub, s)) / 2.0, top + 12.0 * s + step * lines.len() as f32, s, sub, [0.9, 0.9, 0.9, 1.0]);
         }
     }
 }

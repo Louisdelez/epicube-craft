@@ -51,6 +51,7 @@ Pour produire un dossier prêt à distribuer : `sh scripts/empaqueter.sh` (macOS
 | [Guide du joueur](docs/jouer.md) | commandes, modes de jeu, difficultés, chat et commandes, chat vocal, réglages |
 | [Le monde](docs/monde.md) | biomes, mondes, structures, créatures, objets, armures, ferme, circuits |
 | [Multijoueur et serveur](docs/serveur.md) | partie en réseau local, serveur dédié, sauvegardes, règles d'un monde |
+| [Comptes des joueurs](docs/comptes.md) | jeton signé, branchement du launcher et du service de comptes, réglage d'un serveur |
 | [Modifier les ressources](docs/ressources.md) | textures, modèles Blockbench, sons |
 | [Compiler et distribuer](docs/compiler.md) | compilation par système, empaquetage, tests, mesure des performances |
 | [Architecture](docs/architecture.md) | organisation du code, protocole, rendu, formats de sauvegarde |

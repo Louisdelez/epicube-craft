@@ -5,6 +5,7 @@
 // Windows : pas de fenetre de terminal a cote du jeu (la version de mise au point la garde, pour ses messages).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod account;
 mod assets;
 mod atlas;
 mod audio;
@@ -484,6 +485,9 @@ pub struct FrameOut {
 /// Une partie en cours : l'etat recu du serveur et le joueur local.
 pub struct App {
     net: Net,
+    /// Compte du joueur : la cle de session, et l'adresse composee, que l'on signe au defi du serveur.
+    session: Option<[u8; 32]>,
+    address: String,
     world: World,
     dirty: HashSet<(i32, i32)>,
     /// Chunks a reconstruire tout de suite (un bloc y a change).
@@ -623,6 +627,8 @@ impl App {
             .collect();
         App {
             net,
+            session: None,
+            address: String::new(),
             world: World { chunks: HashMap::new() },
             dirty: HashSet::new(),
             urgent: HashSet::new(),
@@ -760,7 +766,13 @@ impl App {
                     self.time = time as f32;
                     self.joined = true;
                 }
-                ServerMsg::Refused { reason } => self.lost = Some(format!("Connexion refusee : {reason}")),
+                ServerMsg::Refused { reason } => self.lost = Some(format!("Connexion refusée : {reason}")),
+                ServerMsg::Challenge { nonce } => {
+                    if let Some(secret) = self.session {
+                        let sig = shared::account::prove(&secret, &nonce, &self.address);
+                        self.net.send(ClientMsg::Proof { address: self.address.clone(), sig });
+                    }
+                }
                 ServerMsg::Chunk { cx, cz, data } => {
                     let (cx, cz) = self.loc_chunk(cx, cz);
                     if let Some(c) = Chunk::decode(&data) {
@@ -782,7 +794,7 @@ impl App {
                     self.light.remove(&(cx, cz));
                 }
                 ServerMsg::BlockChange { pos, b, m } => self.block_change(self.loc_cell(pos), b, m),
-                ServerMsg::PlayerJoin { id, name } => {
+                ServerMsg::PlayerJoin { id, name, .. } => {
                     self.info = Some((format!("{name} est dans la partie"), 4.0));
                     self.others.insert(id, Remote { name, target: Vec3::ZERO, shown: Vec3::ZERO, yaw: 0.0, walk: 0.0, gear: [0; 4], talk: 0.0 });
                 }
@@ -2019,6 +2031,8 @@ pub struct Shell {
     pub screen: Screen,
     pub game: Option<App>,
     local: Option<server::ServerHandle>,
+    /// Compte remis par le launcher ; sans lui, on joue hors ligne sous le pseudo des parametres.
+    pub account: Option<account::Account>,
     pub error: Option<String>,
     /// Message affiche dans les parametres (export, rechargement).
     pub status: Option<String>,
@@ -2072,8 +2086,13 @@ impl Shell {
         match Net::connect(addr) {
             Ok(net) => {
                 let st = &self.settings;
-                net.send(ClientMsg::Hello { version: PROTOCOL_VERSION, name: st.name.clone(), view: st.view as u8 });
-                self.game = Some(App::new(net, st));
+                let name = self.account.as_ref().map_or(st.name.clone(), |a| a.name.clone());
+                let token = self.account.as_ref().map(|a| a.token.clone());
+                net.send(ClientMsg::Hello { version: PROTOCOL_VERSION, name, view: st.view as u8, account: token });
+                let mut game = App::new(net, st);
+                game.session = self.account.as_ref().map(|a| a.secret);
+                game.address = shared::account::normal_address(addr);
+                self.game = Some(game);
                 self.screen = Screen::Game;
                 self.error = None;
             }
@@ -2256,6 +2275,13 @@ impl Shell {
             self.field = if self.field == 1 { 2 } else { 1 };
         }
 
+        // Refuse avant d'etre entre : on revient au menu, qui affiche le motif.
+        if let Some(reason) = self.game.as_ref().filter(|g| !g.joined).and_then(|g| g.lost.clone()) {
+            let local = self.is_local();
+            self.leave(gfx);
+            self.screen = if local { Screen::Title } else { Screen::Multi };
+            self.error = Some(reason);
+        }
         let (w, h) = gfx.size();
         let s = self.settings.scale(h);
         let mut out = match &mut self.game {
@@ -2486,6 +2512,18 @@ fn main() {
         settings.name = n.chars().take(16).collect();
     }
     settings.lan |= flag("--lan");
+    // Compte remis par le launcher. Un compte illisible n'empeche pas de jouer : on le dit et on continue hors ligne.
+    let account = match account::from_env() {
+        Ok(Some(a)) => {
+            println!("Compte : {} ({}){}", a.name, shared::account::format_id(&a.id), if a.expired { " - session expirée" } else { "" });
+            Some(a)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("Compte ignoré : {e}. Le jeu démarre hors ligne.");
+            None
+        }
+    };
     let (img, models, shapes, log) = build_assets();
     for l in &log {
         println!("{l}");
@@ -2511,6 +2549,7 @@ fn main() {
         screen: Screen::Title,
         game: None,
         local: None,
+        account,
         error: None,
         status: None,
         field: 0,

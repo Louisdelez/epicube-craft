@@ -3,7 +3,7 @@ use crate::items::Slot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Nature d'une ligne de chat.
 pub mod chat {
@@ -61,7 +61,10 @@ pub enum WindowKind {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMsg {
-    Hello { version: u32, name: String, view: u8 },
+    /// `account` : jeton remis par le launcher, pour un joueur connecte a son compte.
+    Hello { version: u32, name: String, view: u8, account: Option<String> },
+    /// Reponse au defi du serveur : la signature du nombre recu et de l'adresse composee par le joueur.
+    Proof { address: String, sig: Vec<u8> },
     Pos { pos: [f64; 3], yaw: f64, pitch: f64, on_ground: bool },
     SetFly(bool),
     /// Nouvelle distance de vue, en chunks.
@@ -110,9 +113,12 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     Welcome { id: u32, seed: u32, spawn: [f64; 3], time: f64, dim: u8 },
     Refused { reason: String },
+    /// Defi lance a un joueur qui presente un compte : il doit le signer avec sa cle de session.
+    Challenge { nonce: [u8; 32] },
     Chunk { cx: i32, cz: i32, data: Vec<u8> },
     Unload { cx: i32, cz: i32 },
-    PlayerJoin { id: u32, name: String },
+    /// `account` : identifiant de compte du joueur (voir `shared::account`).
+    PlayerJoin { id: u32, name: String, account: [u8; 16] },
     PlayerPos { id: u32, pos: [f64; 3], yaw: f64, pitch: f64 },
     PlayerLeave { id: u32 },
     Time { time: f64 },

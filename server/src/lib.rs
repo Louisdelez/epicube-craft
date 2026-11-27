@@ -1,4 +1,5 @@
 //! Serveur Epicube Craft : fait autorite sur le monde, les inventaires et la survie.
+pub mod accounts;
 mod chat;
 mod combat;
 mod farm;
@@ -161,9 +162,21 @@ fn read_player(data: &[u8]) -> Option<PlayerSave> {
     Some(PlayerSave { pos: wide(v1.pos), hp: v1.hp as f64, hunger: v1.hunger as f64, inv: v1.inv, home: None, dim: 0 })
 }
 
+/// Joueur qui a presente un jeton valide et doit encore repondre au defi.
+struct Pending {
+    claims: shared::account::Claims,
+    nonce: [u8; 32],
+    view: u8,
+}
+
 struct Client {
     tx: Sender<ServerMsg>,
     name: String,
+    /// Identifiant du compte : celui du jeton, ou un identifiant hors ligne tire du pseudo.
+    account: shared::account::Id,
+    /// Le compte a ete verifie (jeton signe et defi releve).
+    verified: bool,
+    pending: Option<Pending>,
     pos: [f64; 3],
     prev: [f64; 3],
     yaw: f64,
@@ -273,6 +286,8 @@ struct Server {
     rules: shared::rules::Rules,
     /// Dossier de la sauvegarde, ou les regles sont notees.
     save_dir: Option<PathBuf>,
+    /// Ce que le serveur exige des comptes.
+    accounts: accounts::Accounts,
     world: World,
     tick: u64,
     /// Cadence mesuree (ticks par seconde) et duree moyenne d'un tick (ms), pour l'ecran d'informations des joueurs.
@@ -313,7 +328,12 @@ impl Realm {
 }
 
 impl Server {
+    #[cfg(test)]
     fn new(seed: u32, dir: Option<PathBuf>) -> Server {
+        Server::with_accounts(seed, dir, accounts::Accounts::default())
+    }
+
+    fn with_accounts(seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts) -> Server {
         // Regles : celles du fichier ; a defaut, un monde deja cree garde sa liberte d'avant, un monde neuf est en survie normale.
         let rules = match dir.as_ref().map(|d| (d.join("regles.txt"), d.join("monde.bin").exists())) {
             Some((file, old)) => match std::fs::read_to_string(&file) {
@@ -340,6 +360,7 @@ impl Server {
             parked,
             rules,
             save_dir,
+            accounts,
             world,
             tick: 0,
             tps: TPS as f64,
@@ -442,6 +463,9 @@ impl Client {
         Client {
                         tx,
                         name: String::new(),
+                        account: [0; 16],
+                        verified: false,
+                        pending: None,
                         pos: spawn,
                         prev: spawn,
                         yaw: 0.0,
@@ -530,17 +554,17 @@ pub fn spawn_local(seed: u32, dir: Option<PathBuf>, lan: bool) -> std::io::Resul
     } else {
         TcpListener::bind("127.0.0.1:0")?
     };
-    start(listener, seed, dir)
+    start(listener, seed, dir, accounts::Accounts::local())
 }
 
-/// Demarre le serveur sur `listener`. `dir` = dossier de sauvegarde.
-pub fn start(listener: TcpListener, seed: u32, dir: Option<PathBuf>) -> std::io::Result<ServerHandle> {
+/// Demarre le serveur sur `listener`. `dir` = dossier de sauvegarde, `accounts` = regles d'entree.
+pub fn start(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts) -> std::io::Result<ServerHandle> {
     let port = listener.local_addr()?.port();
     let (ev_tx, ev_rx) = mpsc::channel::<Event>();
     let accept_tx = ev_tx.clone();
     thread::spawn(move || accept_loop(listener, accept_tx));
     let join = thread::Builder::new().name("serveur".into()).spawn(move || {
-        Server::new(seed, dir).run(ev_rx);
+        Server::with_accounts(seed, dir, accounts).run(ev_rx);
     })?;
     Ok(ServerHandle { tx: ev_tx, join: Some(join), port })
 }
@@ -709,27 +733,40 @@ impl Server {
                 );
             }
             Event::Msg(id, msg) => self.on_msg(id, msg),
-            Event::Leave(id) => {
-                if let Some(dim) = self.clients.get(&id).map(|c| c.dim) {
-                    self.enter(dim);
-                }
-                self.close_window(id);
-                self.save_player(id);
-                if let Some(c) = self.clients.remove(&id) {
-                    if c.ready {
-                        println!("{} a quitte la partie", c.name);
-                        self.broadcast_all(ServerMsg::PlayerLeave { id }, None);
-                        self.broadcast_all(ServerMsg::Roster { name: c.name.clone(), here: false }, None);
-                        self.announce(&format!("{} a quitté la partie", c.name), shared::proto::chat::INFO);
-                    }
-                }
-            }
+            Event::Leave(id) => self.leave(id),
             Event::Shutdown => {}
         }
     }
 
+    /// Un joueur s'en va : on range ses affaires et on previent les autres.
+    fn leave(&mut self, id: u32) {
+        if let Some(dim) = self.clients.get(&id).map(|c| c.dim) {
+            self.enter(dim);
+        }
+        self.close_window(id);
+        self.save_player(id);
+        if let Some(c) = self.clients.remove(&id) {
+            if c.ready {
+                println!("{} a quitte la partie", c.name);
+                self.broadcast_all(ServerMsg::PlayerLeave { id }, None);
+                self.broadcast_all(ServerMsg::Roster { name: c.name.clone(), here: false }, None);
+                self.announce(&format!("{} a quitté la partie", c.name), shared::proto::chat::INFO);
+            }
+        }
+    }
+
+    /// Met un joueur dehors en lui disant pourquoi.
+    fn kick(&mut self, id: u32, reason: &str) {
+        if let Some(c) = self.clients.get(&id) {
+            c.send(ServerMsg::Refused { reason: reason.to_string() });
+        }
+        self.leave(id);
+    }
+
     fn on_msg(&mut self, id: u32, msg: ClientMsg) {
-        if !matches!(msg, ClientMsg::Hello { .. }) && !self.clients.get(&id).is_some_and(|c| c.ready) {
+        // Avant d'etre admis, un joueur ne peut que se presenter ; apres, il ne se presente plus.
+        let greeting = matches!(msg, ClientMsg::Hello { .. } | ClientMsg::Proof { .. });
+        if greeting == self.clients.get(&id).is_some_and(|c| c.ready) {
             return;
         }
         // Un spectateur regarde : rien de ce qui touche au monde ne passe. En aventure, on ne creuse pas.
@@ -756,7 +793,8 @@ impl Server {
             self.enter(dim);
         }
         match msg {
-            ClientMsg::Hello { version, name, view } => self.hello(id, version, name, view),
+            ClientMsg::Hello { version, name, view, account } => self.hello(id, version, name, view, account),
+            ClientMsg::Proof { address, sig } => self.proof(id, address, sig),
             ClientMsg::Pos { pos, yaw, pitch, on_ground } => self.on_pos(id, pos, yaw, pitch, on_ground),
             ClientMsg::Chat { text } => self.chat(id, text),
             ClientMsg::Voice { data } => self.voice(id, data),
@@ -826,22 +864,76 @@ impl Server {
         }
     }
 
-    fn hello(&mut self, id: u32, version: u32, name: String, view: u8) {
+    /// Refuse l'entree a un joueur qui n'est pas encore admis.
+    fn refuse(&mut self, id: u32, reason: String) {
+        if let Some(c) = self.clients.remove(&id) {
+            c.send(ServerMsg::Refused { reason });
+        }
+    }
+
+    fn hello(&mut self, id: u32, version: u32, name: String, view: u8, token: Option<String>) {
         if version != PROTOCOL_VERSION {
-            if let Some(c) = self.clients.remove(&id) {
-                c.send(ServerMsg::Refused {
-                    reason: format!("version du protocole {version}, attendu {PROTOCOL_VERSION}"),
-                });
+            return self.refuse(id, format!("version du protocole {version}, attendu {PROTOCOL_VERSION}"));
+        }
+        // Un compte : on verifie le jeton, puis on lance un defi que seul son detenteur peut relever.
+        if let (Some(token), Some(key)) = (token, self.accounts.key) {
+            let now = (!self.accounts.lenient).then(shared::account::now);
+            match shared::account::verify(&token, &key, now) {
+                Ok(claims) => {
+                    let nonce = shared::account::random32();
+                    if let Some(c) = self.clients.get_mut(&id) {
+                        c.pending = Some(Pending { claims, nonce, view });
+                        c.send(ServerMsg::Challenge { nonce });
+                    }
+                }
+                Err(e) => self.refuse(id, e.to_string()),
             }
             return;
         }
-        let mut name: String = name.chars().filter(|c| !c.is_control()).take(16).collect();
+        if self.accounts.required {
+            return self.refuse(id, "ce serveur demande un compte Epicube Craft : lancez le jeu depuis le launcher".into());
+        }
+        // Sans compte, le joueur n'a que son pseudo ; s'il est pris, on le distingue.
+        let mut name = shared::account::clean_name(&name);
         if name.is_empty() || self.clients.values().any(|c| c.ready && c.name == name) {
             name = format!("{name}{id}");
         }
+        self.admit(id, shared::account::offline_id(&name), false, name, view);
+    }
+
+    /// Reponse au defi : la signature doit venir de la cle de session du jeton.
+    fn proof(&mut self, id: u32, address: String, sig: Vec<u8>) {
+        let Some(p) = self.clients.get_mut(&id).and_then(|c| c.pending.take()) else { return };
+        if !shared::account::check_proof(&p.claims.key, &p.nonce, &address, &sig) {
+            return self.refuse(id, "preuve de compte invalide".into());
+        }
+        // Le joueur a signe l'adresse qu'il a composee : si ce n'est pas la notre, quelqu'un relaie sa connexion.
+        if !self.accounts.addresses.is_empty() && !self.accounts.addresses.contains(&shared::account::normal_address(&address)) {
+            return self.refuse(id, format!("ce serveur n'est pas « {address} » : connexion relayée refusée"));
+        }
+        let (account, name) = (p.claims.id, p.claims.name);
+        if self.clients.values().any(|c| c.ready && c.account == account) {
+            return self.refuse(id, "ce compte est déjà connecté à ce serveur".into());
+        }
+        // Le pseudo d'un compte lui appartient : un joueur sans compte qui le porte lui cede la place.
+        let squatters: Vec<u32> = self.clients.iter().filter(|(_, c)| c.ready && c.name == name).map(|(i, _)| *i).collect();
+        for other in squatters {
+            self.kick(other, "ce pseudo appartient à un compte qui vient de se connecter");
+        }
+        self.admit(id, account, true, name, p.view);
+    }
+
+    /// Fait entrer un joueur identifie dans la partie.
+    fn admit(&mut self, id: u32, account: shared::account::Id, verified: bool, name: String, view: u8) {
+        // La sauvegarde suit le compte. Celles d'avant les comptes portaient le pseudo : on les reprend.
+        if let (Some(file), Some(old)) = (self.world.player_file(&account), self.world.player_path(&name)) {
+            if !file.exists() && old.exists() {
+                let _ = std::fs::rename(old, file);
+            }
+        }
         let save: Option<PlayerSave> = self
             .world
-            .player_path(&name)
+            .player_file(&account)
             .and_then(|p| std::fs::read(p).ok())
             .and_then(|d| read_player(&d));
         // L'octet de dimension du fichier porte aussi le mode de jeu (quartet haut : mode + 1, 0 = jamais fixe).
@@ -856,7 +948,7 @@ impl Server {
             .clients
             .iter()
             .filter(|(oid, c)| **oid != id && c.ready)
-            .flat_map(|(oid, c)| [ServerMsg::PlayerJoin { id: *oid, name: c.name.clone() }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)) }])
+            .flat_map(|(oid, c)| [ServerMsg::PlayerJoin { id: *oid, name: c.name.clone(), account: c.account }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)) }])
             .collect();
         let drops: Vec<ServerMsg> = self
             .drops
@@ -882,6 +974,8 @@ impl Server {
         c.prev = c.pos;
         c.fall_peak = c.pos[1];
         c.name = name.clone();
+        c.account = account;
+        c.verified = verified;
         c.view = (view as i32).clamp(2, MAX_VIEW);
         c.ready = true;
         c.moved = true;
@@ -923,7 +1017,7 @@ impl Server {
         for m in others.into_iter().chain(drops) {
             c.send(m);
         }
-        println!("{name} a rejoint la partie");
+        println!("{name} a rejoint la partie ({}, {})", shared::account::format_id(&account), if verified { "compte vérifié" } else { "sans compte" });
         self.info(id, &format!("Bienvenue, {name} !"));
         // Le chat propose les noms des joueurs : le nouveau recoit ceux des presents, et tous recoivent le sien.
         for other in self.clients.values().filter(|c| c.ready && c.name != name) {
@@ -933,7 +1027,7 @@ impl Server {
         }
         self.broadcast_all(ServerMsg::Roster { name: name.clone(), here: true }, None);
         self.announce(&format!("{name} a rejoint la partie"), shared::proto::chat::INFO);
-        self.broadcast_all(ServerMsg::PlayerJoin { id, name }, Some(id));
+        self.broadcast_all(ServerMsg::PlayerJoin { id, name, account }, Some(id));
         // Aide au developpement : EPICUBE_DEMO=abime ou zenith envoie le joueur dans la dimension.
         match std::env::var("EPICUBE_DEMO").as_deref() {
             Ok("abime") => self.travel(id, 1),
@@ -2228,7 +2322,7 @@ impl Server {
 
     fn save_player(&self, id: u32) {
         let Some(c) = self.clients.get(&id).filter(|c| c.ready) else { return };
-        let Some(path) = self.world.player_path(&c.name) else { return };
+        let Some(path) = self.world.player_file(&c.account) else { return };
         // Un joueur mort reapparaitra au point de depart, en pleine forme.
         let save = if c.dead {
             let pos = c.home.unwrap_or(self.spawn);

@@ -180,6 +180,13 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             if wd.button(x, y, bw, bh, "Quitter") {
                 action = Action::Quit;
             }
+            // Sous quel nom on joue : le compte du launcher, ou hors ligne.
+            let who = match &sh.account {
+                Some(a) if a.expired => format!("Compte : {} (session expirée, solo seulement)", a.name),
+                Some(a) => format!("Compte : {}", a.name),
+                None => format!("Hors ligne : {}", sh.settings.name),
+            };
+            wd.ui.text(w - Ui::text_width(&who, s) - 4.0 * s, h - 12.0 * s, s, &who, GREY);
             wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.9", GREY);
         }
         Screen::Solo => {
@@ -246,11 +253,15 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 sh.field = 1;
             }
             y += bh + 16.0 * s;
-            if wd.field(x, y, bw, bh, "Pseudo", &sh.settings.name, sh.field == 2, blink) {
+            // Avec un compte, le pseudo est le sien : il ne se saisit pas.
+            if let Some(a) = &sh.account {
+                wd.field(x, y, bw, bh, "Compte", &a.name, false, false);
+                sh.field = 1;
+            } else if wd.field(x, y, bw, bh, "Pseudo", &sh.settings.name, sh.field == 2, blink) {
                 sh.field = 2;
             }
             y += bh + 10.0 * s;
-            let ready = !sh.settings.address.is_empty() && !sh.settings.name.is_empty();
+            let ready = !sh.settings.address.is_empty() && (sh.account.is_some() || !sh.settings.name.is_empty());
             if wd.button(x, y, bw, bh, "Rejoindre") && ready {
                 action = Action::Join;
             }
@@ -412,7 +423,10 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             wd.toggle(x2, row(4.0), cw, bh, "Contours à l'encre", &mut st.ink);
             if !in_game {
                 wd.toggle(x1, row(4.0), cw, bh, "Solo en réseau local", &mut st.lan);
-                if wd.field(x1, row(5.0) + 12.0 * s, cw, bh, "Pseudo", &st.name.clone(), sh.field == 2, blink) {
+                if let Some(a) = &sh.account {
+                    wd.field(x1, row(5.0) + 12.0 * s, cw, bh, "Compte", &a.name, false, false);
+                    sh.field = 0;
+                } else if wd.field(x1, row(5.0) + 12.0 * s, cw, bh, "Pseudo", &st.name.clone(), sh.field == 2, blink) {
                     sh.field = 2;
                 }
                 if sh.field == 2 {
@@ -476,9 +490,14 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
         Screen::Game => {}
     }
     if let Some(err) = &sh.error {
-        let tw = Ui::text_width(err, s);
-        wd.ui.rect((w - tw) / 2.0 - 4.0 * s, h - 30.0 * s, tw + 8.0 * s, 14.0 * s, [0.4, 0.0, 0.0, 0.85]);
-        wd.ui.text((w - tw) / 2.0, h - 27.0 * s, s, err, WHITE);
+        // Un motif long tient sur plusieurs lignes, la derniere au meme endroit qu'une ligne seule.
+        let lines = crate::chatbox::wrap(err, s, w - 40.0 * s);
+        let tw = lines.iter().map(|l| Ui::text_width(l, s)).fold(0.0, f32::max);
+        let top = h - 30.0 * s - 11.0 * s * (lines.len() as f32 - 1.0);
+        wd.ui.rect((w - tw) / 2.0 - 4.0 * s, top, tw + 8.0 * s, 3.0 * s + 11.0 * s * lines.len() as f32, [0.4, 0.0, 0.0, 0.85]);
+        for (k, line) in lines.iter().enumerate() {
+            wd.ui.text((w - Ui::text_width(line, s)) / 2.0, top + 3.0 * s + 11.0 * s * k as f32, s, line, WHITE);
+        }
     }
     action
 }

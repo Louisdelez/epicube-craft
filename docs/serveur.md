@@ -20,8 +20,11 @@ epicube-craft-server --port 25600 --seed 1337 --world monde
 | `--port` | port d'écoute (TCP) | 25600 |
 | `--seed` | graine d'un monde neuf | 1337 |
 | `--world` | nom du monde, dans le dossier `saves` | `serveur` |
+| `--comptes` | `obligatoires` ou `facultatifs` : exiger un compte vérifié | celui de `comptes.txt` |
 
 `Ctrl+C` sauvegarde le monde puis arrête le serveur. Pour jouer depuis Internet, il faut ouvrir ce port sur le routeur de l'hôte.
+
+Le serveur peut n'admettre que les joueurs connectés à leur **compte** : c'est le fichier `comptes.txt`, créé à côté de lui au premier démarrage. Voir [Comptes des joueurs](comptes.md).
 
 Le serveur tourne à 20 ticks par seconde. L'écran `F3` du client affiche sa cadence réelle, la durée moyenne d'un tick et le ping.
 
@@ -54,7 +57,7 @@ Chaque monde a son dossier dans `saves/` :
 | `regles.txt` | les règles du monde (voir ci-dessous) |
 | `monde.bin`, `monde_d1.bin`, `monde_d2.bin` | état de chaque monde : heure, coffres, fours, créatures |
 | `c_X_Z.bin` | les chunks modifiés ; les autres sont régénérés depuis la graine |
-| `joueurs/<pseudo>.bin` | position, vie, faim, inventaire, équipement, mode de jeu |
+| `joueurs/<uuid>.bin` | position, vie, faim, inventaire, équipement, mode de jeu ; un fichier par compte (ou par pseudo, pour un joueur sans compte) |
 
 Le monde est enregistré toutes les trente secondes, et à l'arrêt. Pour sauvegarder un monde, copiez son dossier.
 
@@ -81,5 +84,5 @@ Un monde créé avant l'existence de ce fichier garde la triche autorisée.
 ## Limites connues
 
 - Pas de liste blanche, de bannissement ni de rôles : tout joueur connecté a les mêmes droits, ceux que donnent les règles du monde.
-- Les échanges ne sont pas chiffrés ; les pseudos ne sont pas authentifiés. À réserver aux parties entre personnes de confiance.
+- Les échanges ne sont pas chiffrés. Sans `comptes=obligatoires`, les pseudos des joueurs sans compte ne sont pas authentifiés.
 - La voix passe par le serveur, sur la même connexion que le reste : environ 16 ko par seconde et par joueur qui parle.
