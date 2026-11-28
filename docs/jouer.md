@@ -130,6 +130,8 @@ En jeu, le nom de chaque joueur qui parle s'affiche en haut à droite. Un casque
 
 Les réglages sont enregistrés dans `epicube-craft.cfg`, à côté du jeu.
 
+Si le jeu se ferme tout seul, il note la raison dans `plantage.txt`, à côté du jeu : c'est le fichier à joindre pour signaler le problème.
+
 ## Limites connues
 
 - Pas de choix du périphérique d'entrée pour le micro, ni de réduction de bruit ou d'annulation d'écho.

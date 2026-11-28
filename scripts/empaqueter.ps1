@@ -9,6 +9,10 @@ $out = Join-Path "dist" $name
 
 cargo build --release -p client -p server
 if ($LASTEXITCODE -ne 0) { throw "La compilation a echoue." }
+# Un Windows neuf n'a pas le runtime Visual C++ : les executables ne doivent pas en dependre.
+foreach ($exe in "target\release\epicube-craft.exe", "target\release\epicube-craft-server.exe") {
+    if (Select-String -Path $exe -Pattern "VCRUNTIME140" -SimpleMatch -Quiet) { throw "$exe depend de VCRUNTIME140.dll" }
+}
 
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force $out | Out-Null

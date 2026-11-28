@@ -2441,6 +2441,27 @@ fn attach_parent_console() {
 #[cfg(not(windows))]
 fn attach_parent_console() {}
 
+/// Fichier ou le jeu note pourquoi il s'est arrete, a cote des sauvegardes.
+const CRASH_FILE: &str = "plantage.txt";
+
+/// Sous Windows le jeu n'a pas de terminal : une erreur fatale le fermait sans rien dire. On la note
+/// dans `plantage.txt` (message, endroit du code, fil, pile d'appels), en plus de l'affichage habituel.
+fn report_crashes() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let report = format!(
+            "Epicube Craft ({} {})\nFil : {}\n{info}\n\nPile d'appels :\n{}\n",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            thread.name().unwrap_or("sans nom"),
+            std::backtrace::Backtrace::force_capture(),
+        );
+        let _ = std::fs::write(CRASH_FILE, report);
+        default(info);
+    }));
+}
+
 fn main() {
     // MoltenVK (Vulkan sur macOS) : agrandir l'image sans la lisser. Lu a la creation du moteur graphique.
     if cfg!(target_os = "macos") && std::env::var_os("MVK_CONFIG_SWAPCHAIN_MIN_MAG_FILTER_USE_NEAREST").is_none() {
@@ -2448,6 +2469,11 @@ fn main() {
     }
     attach_parent_console();
     enter_data_dir();
+    report_crashes();
+    // Essai du rapport de plantage : EPICUBE_ESSAI_PLANTAGE=1 arrete le jeu comme le ferait une erreur fatale.
+    if std::env::var_os("EPICUBE_ESSAI_PLANTAGE").is_some() {
+        panic!("essai du rapport de plantage");
+    }
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let flag = |name: &str| args.iter().any(|a| a == name);

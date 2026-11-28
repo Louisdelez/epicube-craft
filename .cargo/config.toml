@@ -1,0 +1,4 @@
+# Windows : le runtime Visual C++ est inclus dans les executables. Sans cela, ils demandent
+# VCRUNTIME140.dll, absent d'un Windows qui n'a jamais installe le redistribuable Microsoft.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
