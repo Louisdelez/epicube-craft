@@ -11,6 +11,9 @@ voxterra.cfg
 comptes.txt
 *.cle
 
+# Rapport ecrit par le jeu quand il s'arrete sur une erreur
+plantage.txt
+
 # Systeme
 .DS_Store
 Thumbs.db
