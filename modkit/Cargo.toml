@@ -1,0 +1,8 @@
+[package]
+name = "epicube-mod"
+version = "0.1.0"
+edition = "2021"
+description = "Kit de création de mods Rust pour Epicube Craft"
+license = "MIT"
+
+[dependencies]

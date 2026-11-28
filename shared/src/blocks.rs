@@ -328,6 +328,7 @@ pub fn shape(b: B) -> Shape {
         SAPLING | WHEAT | CARROT | TORCH | LEVER | SIGTORCH | TALLGRASS | FLOWER | SOY | TEA | STEM | BAMBOO | STALACTITE | COBWEB | ONIBI => Shape::Cross,
         WIRE | RAIL | POWERED_RAIL | DETECTOR_RAIL | TRIPWIRE | LOTUS => Shape::Flat,
         REPEATER | COMPARATOR | BUTTON | PLATE | HOOK => Shape::Thin,
+        _ if b >= crate::mods::FIRST_BLOCK && crate::mods::with(b, |d| d.shape) == Some(1) => Shape::Cross,
         _ => Shape::Cube,
     }
 }
@@ -348,6 +349,9 @@ pub fn solid(b: B, m: u8) -> bool {
 
 /// Cube plein qui cache les faces voisines et bloque la lumiere.
 pub fn opaque(b: B) -> bool {
+    if b >= crate::mods::FIRST_BLOCK && crate::mods::with(b, |d| d.clear) == Some(true) {
+        return false;
+    }
     shape(b) == Shape::Cube && !matches!(b, LEAVES | CEDAR_LEAVES | MAPLE_LEAVES | WISTERIA | GLASS | BED | DOOR | PISTON_HEAD | SUNDIAL | ABYSS_PORTAL)
 }
 
@@ -379,6 +383,7 @@ pub fn emit(b: B, m: u8) -> u8 {
         VOLT_BLOCK => 4,
         // Explosif amorce.
         EXPLOSIVE if m & 1 == 1 => 12,
+        _ if b >= crate::mods::FIRST_BLOCK => crate::mods::with(b, |d| d.light.min(15)).unwrap_or(0),
         _ => 0,
     }
 }
@@ -704,6 +709,13 @@ pub fn tile(b: B, m: u8, f: usize) -> u16 {
                 t::DROPPER_SIDE
             }
         }
+        // Bloc de mod : dessus, cotes, dessous.
+        _ if b >= crate::mods::FIRST_BLOCK => crate::mods::with(b, |d| d.tiles[match f {
+            2 => 0,
+            3 => 2,
+            _ => 1,
+        }])
+        .unwrap_or(t::WHITE),
         _ => t::WHITE,
     }
 }

@@ -1,0 +1,7 @@
+{
+  "id": "rubis",
+  "name": "Rubis",
+  "version": "2.0.0",
+  "description": "Minerai, gemme, outils, recettes, filons, golem, fleur et boutique (touche G). Exemple de gros mod en Rust.",
+  "author": "Epicube"
+}

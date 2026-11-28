@@ -1,0 +1,18 @@
+[package]
+name = "rubis-serveur"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+epicube-mod = { path = "../../../../modkit" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[workspace]

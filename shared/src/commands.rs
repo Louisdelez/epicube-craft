@@ -141,6 +141,7 @@ pub fn all_items() -> Vec<Id> {
         .chain(items::TOOL4_BASE..=items::SHIELD)
         .chain(items::TAMA_SHARD..items::REALM_END)
         .chain(items::ARMOR_BASE..items::ARMOR_END)
+        .chain(crate::mods::content().items.iter().map(|d| d.id))
         .collect()
 }
 
@@ -199,7 +200,8 @@ pub fn suggest(input: &str, players: &[String], cheats: bool) -> Vec<String> {
     let last = plain(words.last().copied().unwrap_or(""));
     let pool = if words.len() <= 1 {
         // Les commandes de triche ne sont proposees que si le monde les permet.
-        COMMANDS.iter().filter(|c| cheats || !c.cheat).map(|c| c.name.to_string()).collect()
+        let mods = crate::mods::content();
+        COMMANDS.iter().filter(|c| cheats || !c.cheat).map(|c| c.name.to_string()).chain(mods.commands.iter().map(|c| c.0.clone())).collect()
     } else {
         let Some(spec) = find(words[0]) else { return Vec::new() };
         match spec.args.get(words.len() - 2) {
@@ -230,7 +232,14 @@ pub fn complete(input: &str, choice: &str) -> String {
 pub fn hint(input: &str) -> Option<String> {
     let rest = input.strip_prefix('/')?;
     let name = rest.split(' ').next()?;
-    (rest.contains(' ')).then(|| find(name)).flatten().map(|s| format!("{} - {}", usage(s), s.help))
+    if !rest.contains(' ') {
+        return None;
+    }
+    find(name).map(|s| format!("{} - {}", usage(s), s.help)).or_else(|| {
+        // Une commande de mod : son nom et l'aide que le mod a donnee.
+        let (mods, name) = (crate::mods::content(), plain(name));
+        mods.commands.iter().find(|c| c.0 == name).map(|c| if c.1.is_empty() { format!("/{}", c.0) } else { format!("/{} - {}", c.0, c.1) })
+    })
 }
 
 #[cfg(test)]

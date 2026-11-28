@@ -17,3 +17,9 @@ plantage.txt
 # Systeme
 .DS_Store
 Thumbs.db
+
+# Mods installes par le joueur, et mods d'exemple compiles
+/mods/
+exemples/**/target/
+exemples/**/*.wasm
+exemples/**/Cargo.lock

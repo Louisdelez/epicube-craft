@@ -4,6 +4,7 @@ mod chat;
 mod combat;
 mod farm;
 mod mobs;
+mod mods;
 mod rails;
 mod realms;
 mod signal;
@@ -177,6 +178,11 @@ struct Client {
     /// Le compte a ete verifie (jeton signe et defi releve).
     verified: bool,
     pending: Option<Pending>,
+    /// Joueur identifie qui telecharge les mods du serveur avant d'entrer : compte, verifie, pseudo, vue.
+    waiting: Option<(shared::account::Id, bool, String, u8)>,
+    /// Messages de mods recus pendant la seconde en cours, et debut de cette seconde.
+    mod_n: u32,
+    mod_t: Instant,
     pos: [f64; 3],
     prev: [f64; 3],
     yaw: f64,
@@ -310,6 +316,12 @@ struct Server {
     dim: u8,
     /// Les autres dimensions, en attente de leur tour.
     parked: Vec<Option<Realm>>,
+    /// Mods de la partie ; None le temps qu'un de leurs scripts s'execute.
+    mods: Option<mods::Host>,
+    /// Joueurs qu'un script vient d'exclure : ils sortent une fois le script revenu.
+    mod_kicks: Vec<(u32, String)>,
+    /// Creatures mortes pendant ce tick, a annoncer aux mods : (dimension, genre, position).
+    mod_deaths: Vec<(u8, u8, u8, Vec3)>,
 }
 
 /// Tout ce qui appartient a une dimension.
@@ -333,7 +345,19 @@ impl Server {
         Server::with_accounts(seed, dir, accounts::Accounts::default())
     }
 
+    #[cfg(test)]
     fn with_accounts(seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts) -> Server {
+        Server::build(seed, dir, accounts, None)
+    }
+
+    /// `packs` : les mods de la partie. None laisse en l'etat les blocs de mods connus du programme.
+    fn build(seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, packs: Option<Vec<shared::mods::Pack>>) -> Server {
+        // Les blocs des mods doivent etre connus avant que le monde ne soit lu.
+        let mods = packs.map(|p| {
+            let host = mods::Host::load(p, dir.as_deref());
+            shared::mods::set_content(host.content.clone());
+            host
+        });
         // Regles : celles du fichier ; a defaut, un monde deja cree garde sa liberte d'avant, un monde neuf est en survie normale.
         let rules = match dir.as_ref().map(|d| (d.join("regles.txt"), d.join("monde.bin").exists())) {
             Some((file, old)) => match std::fs::read_to_string(&file) {
@@ -373,6 +397,9 @@ impl Server {
             mobs: Vec::new(),
             projs: Vec::new(),
             cycle: 0,
+            mods,
+            mod_kicks: Vec::new(),
+            mod_deaths: Vec::new(),
         };
         srv.spawn = srv.find_spawn();
         for dim in 0..3 {
@@ -466,6 +493,9 @@ impl Client {
                         account: [0; 16],
                         verified: false,
                         pending: None,
+            waiting: None,
+            mod_n: 0,
+            mod_t: Instant::now(),
                         pos: spawn,
                         prev: spawn,
                         yaw: 0.0,
@@ -548,23 +578,33 @@ impl ServerHandle {
 
 /// Demarre un serveur local sur un port libre (mode solo).
 /// Avec `lan`, la partie ecoute sur le port par defaut et accepte les autres machines du reseau.
-pub fn spawn_local(seed: u32, dir: Option<PathBuf>, lan: bool) -> std::io::Result<ServerHandle> {
+/// `mods` : les mods installes par le joueur, qui s'appliquent a sa partie.
+pub fn spawn_local(seed: u32, dir: Option<PathBuf>, lan: bool, mods: Vec<shared::mods::Pack>) -> std::io::Result<ServerHandle> {
     let listener = if lan {
         TcpListener::bind(("0.0.0.0", shared::DEFAULT_PORT))?
     } else {
         TcpListener::bind("127.0.0.1:0")?
     };
-    start(listener, seed, dir, accounts::Accounts::local())
+    start_with_mods(listener, seed, dir, accounts::Accounts::local(), mods)
 }
 
 /// Demarre le serveur sur `listener`. `dir` = dossier de sauvegarde, `accounts` = regles d'entree.
 pub fn start(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts) -> std::io::Result<ServerHandle> {
+    launch(listener, seed, dir, accounts, None)
+}
+
+/// Comme `start`, avec les mods de la partie : les joueurs qui ne les ont pas les recoivent a la connexion.
+pub fn start_with_mods(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Vec<shared::mods::Pack>) -> std::io::Result<ServerHandle> {
+    launch(listener, seed, dir, accounts, Some(mods))
+}
+
+fn launch(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Option<Vec<shared::mods::Pack>>) -> std::io::Result<ServerHandle> {
     let port = listener.local_addr()?.port();
     let (ev_tx, ev_rx) = mpsc::channel::<Event>();
     let accept_tx = ev_tx.clone();
     thread::spawn(move || accept_loop(listener, accept_tx));
     let join = thread::Builder::new().name("serveur".into()).spawn(move || {
-        Server::with_accounts(seed, dir, accounts).run(ev_rx);
+        Server::build(seed, dir, accounts, mods).run(ev_rx);
     })?;
     Ok(ServerHandle { tx: ev_tx, join: Some(join), port })
 }
@@ -743,6 +783,9 @@ impl Server {
         if let Some(dim) = self.clients.get(&id).map(|c| c.dim) {
             self.enter(dim);
         }
+        if self.clients.get(&id).is_some_and(|c| c.ready) {
+            self.mod_event("leave", Some(id), &[]);
+        }
         self.close_window(id);
         self.save_player(id);
         if let Some(c) = self.clients.remove(&id) {
@@ -765,7 +808,7 @@ impl Server {
 
     fn on_msg(&mut self, id: u32, msg: ClientMsg) {
         // Avant d'etre admis, un joueur ne peut que se presenter ; apres, il ne se presente plus.
-        let greeting = matches!(msg, ClientMsg::Hello { .. } | ClientMsg::Proof { .. });
+        let greeting = matches!(msg, ClientMsg::Hello { .. } | ClientMsg::Proof { .. } | ClientMsg::ModWant { .. } | ClientMsg::ModsReady);
         if greeting == self.clients.get(&id).is_some_and(|c| c.ready) {
             return;
         }
@@ -795,6 +838,27 @@ impl Server {
         match msg {
             ClientMsg::Hello { version, name, view, account } => self.hello(id, version, name, view, account),
             ClientMsg::Proof { address, sig } => self.proof(id, address, sig),
+            ClientMsg::ModWant { hash, offset } => self.mod_part(id, hash, offset),
+            ClientMsg::ModsReady => {
+                // Le joueur a les mods : il entre, si personne n'a pris sa place entre-temps.
+                let Some((account, verified, name, view)) = self.clients.get_mut(&id).and_then(|c| c.waiting.take()) else { return };
+                if self.clients.values().any(|c| c.ready && (c.account == account || c.name == name)) {
+                    return self.refuse(id, "ce joueur est déjà connecté à ce serveur".into());
+                }
+                self.admit(id, account, verified, name, view);
+            }
+            ClientMsg::ModMsg { mod_id, name, data } => {
+                let Some(c) = self.clients.get_mut(&id) else { return };
+                // Debit borne, comme pour la voix.
+                let now = Instant::now();
+                if now.duration_since(c.mod_t).as_secs_f64() >= 1.0 {
+                    (c.mod_t, c.mod_n) = (now, 0);
+                }
+                c.mod_n += 1;
+                if c.mod_n <= 40 && name.len() <= shared::mods::MSG_NAME && data.len() <= shared::mods::MSG_DATA {
+                    self.mod_event_to(Some(&mod_id), "message", Some(id), &[mods::Arg::S(name), mods::Arg::S(data)]);
+                }
+            }
             ClientMsg::Pos { pos, yaw, pitch, on_ground } => self.on_pos(id, pos, yaw, pitch, on_ground),
             ClientMsg::Chat { text } => self.chat(id, text),
             ClientMsg::Voice { data } => self.voice(id, data),
@@ -842,7 +906,13 @@ impl Server {
             ClientMsg::DropItem { all } => self.drop_selected(id, all),
             ClientMsg::Attack { id: mob } => self.attack(id, mob),
             ClientMsg::Interact { id: mob } => self.interact(id, mob),
-            ClientMsg::Respawn => self.respawn(id),
+            ClientMsg::Respawn => {
+                let was_dead = self.clients.get(&id).is_some_and(|c| c.dead);
+                self.respawn(id);
+                if was_dead && self.clients.get(&id).is_some_and(|c| !c.dead) {
+                    self.mod_event("respawn", Some(id), &[]);
+                }
+            }
             ClientMsg::Shoot { charge } => self.shoot(id, charge),
             ClientMsg::Trade { index } => self.trade(id, index),
             ClientMsg::Rebase => self.resync(id),
@@ -898,7 +968,18 @@ impl Server {
         if name.is_empty() || self.clients.values().any(|c| c.ready && c.name == name) {
             name = format!("{name}{id}");
         }
-        self.admit(id, shared::account::offline_id(&name), false, name, view);
+        self.enroll(id, shared::account::offline_id(&name), false, name, view);
+    }
+
+    /// Un joueur identifie : il recoit d'abord les mods du serveur, s'il y en a, puis il entre.
+    fn enroll(&mut self, id: u32, account: shared::account::Id, verified: bool, name: String, view: u8) {
+        if self.offer_mods(id) {
+            if let Some(c) = self.clients.get_mut(&id) {
+                c.waiting = Some((account, verified, name, view));
+            }
+        } else {
+            self.admit(id, account, verified, name, view);
+        }
     }
 
     /// Reponse au defi : la signature doit venir de la cle de session du jeton.
@@ -920,7 +1001,7 @@ impl Server {
         for other in squatters {
             self.kick(other, "ce pseudo appartient à un compte qui vient de se connecter");
         }
-        self.admit(id, account, true, name, p.view);
+        self.enroll(id, account, true, name, p.view);
     }
 
     /// Fait entrer un joueur identifie dans la partie.
@@ -1028,6 +1109,7 @@ impl Server {
         self.broadcast_all(ServerMsg::Roster { name: name.clone(), here: true }, None);
         self.announce(&format!("{name} a rejoint la partie"), shared::proto::chat::INFO);
         self.broadcast_all(ServerMsg::PlayerJoin { id, name, account }, Some(id));
+        self.mod_event("join", Some(id), &[]);
         // Aide au developpement : EPICUBE_DEMO=abime ou zenith envoie le joueur dans la dimension.
         match std::env::var("EPICUBE_DEMO").as_deref() {
             Ok("abime") => self.travel(id, 1),
@@ -1281,6 +1363,9 @@ impl Server {
                 return;
             }
             c.last_dig = now;
+            if !self.mod_allows("break", id, pos, b) {
+                return;
+            }
             return self.break_block(pos, false);
         }
         let held = c.held();
@@ -1291,6 +1376,10 @@ impl Server {
             return;
         }
         c.last_dig = now;
+        if !self.mod_allows("break", id, pos, b) {
+            return;
+        }
+        let Some(c) = self.clients.get_mut(&id) else { return };
         c.exhaustion += 0.005;
         if time > 0.0 {
             // Un outil s'use d'un cran par bloc ; une arme detournee en outil, de deux.
@@ -1308,6 +1397,19 @@ impl Server {
             }
         }
         self.break_block(pos, items::can_harvest(b, held));
+    }
+
+    /// Demande aux mods s'ils laissent le joueur casser ou poser ce bloc. Sur un refus, le joueur
+    /// revoit le bloc tel qu'il est reste.
+    fn mod_allows(&mut self, event: &str, id: u32, pos: [i32; 3], b: u8) -> bool {
+        use mods::Arg::{N, S};
+        if self.mod_event(event, Some(id), &[N(pos[0] as f64), N(pos[1] as f64), N(pos[2] as f64), S(mods::block_word(b))]) {
+            return true;
+        }
+        if let (Some(c), Some((b, m))) = (self.clients.get(&id), self.world.get(pos)) {
+            c.send(ServerMsg::BlockChange { pos, b, m });
+        }
+        false
     }
 
     /// Retire un bloc, fait tomber son butin et ce qui reposait dessus.
@@ -1377,6 +1479,25 @@ impl Server {
             use blocks::*;
             matches!(b, CHEST | CRAFT | FURNACE | SMOKER | LEVER | BUTTON | DOOR | BED | DROPPER | HOPPER | NOTE | REPEATER | COMPARATOR | COMPOSTER | ABYSS_PORTAL | ZENITH_PORTAL | GATEWAY)
         });
+        // Les mods voient le geste avant le jeu : le bloc vise, puis l'objet tenu. Un refus l'annule.
+        if self.mods.is_some() {
+            use mods::Arg::{N, S};
+            if let Some((pos, _)) = target {
+                if let Some((b, _)) = self.world.get(pos).filter(|_| self.in_reach(id, pos)) {
+                    if !self.mod_event("interact", Some(id), &[N(pos[0] as f64), N(pos[1] as f64), N(pos[2] as f64), S(mods::block_word(b))]) {
+                        return;
+                    }
+                }
+            }
+            if let Some(held) = self.clients.get(&id).and_then(|c| c.held()) {
+                if !self.mod_event("use", Some(id), &[S(mods::item_word(held))]) {
+                    return;
+                }
+            }
+            if self.clients.get(&id).is_none_or(|c| c.dead || c.window != Win::None) {
+                return;
+            }
+        }
         if !busy && self.don_held(id) {
             return;
         }
@@ -1711,6 +1832,9 @@ impl Server {
             if blocked {
                 return false;
             }
+        }
+        if !self.mod_allows("place", id, cell, nb) {
+            return false;
         }
         if !self.world.set(cell, nb, meta) {
             return false;
@@ -2085,6 +2209,7 @@ impl Server {
             self.spawn_drop(pos, vel, st, 1.5);
         }
         self.announce(&format!("{name} est mort"), shared::proto::chat::INFO);
+        self.mod_event("death", Some(id), &[]);
     }
 
     fn respawn(&mut self, id: u32) {
@@ -2140,6 +2265,16 @@ impl Server {
         self.tick_fishing();
         self.tick_gliders();
         self.tick_veils();
+        if self.mods.is_some() {
+            for (dim, kind, skin, pos) in std::mem::take(&mut self.mod_deaths) {
+                self.enter(dim);
+                let word = shared::mods::with_mob(skin, |d| d.key.clone())
+                    .unwrap_or_else(|| shared::commands::MOBS.iter().find(|m| m.1 == kind).map_or("creature", |m| m.0).to_string());
+                self.mod_event("mob_death", None, &[mods::Arg::S(word), mods::Arg::N(pos.x), mods::Arg::N(pos.y), mods::Arg::N(pos.z)]);
+            }
+            self.enter(0);
+            self.mod_event("tick", None, &[]);
+        }
         if self.tick % TPS as u64 == 0 {
             self.broadcast_all(ServerMsg::Time { time: self.time }, None);
         }
@@ -2356,6 +2491,9 @@ impl Server {
             self.world.save(mobs);
         }
         self.enter(back);
+        if let (Some(host), Some(dir)) = (&self.mods, &self.save_dir) {
+            host.save(dir);
+        }
     }
 
     /// Cherche un point d'apparition sur la terre ferme pres de l'origine.

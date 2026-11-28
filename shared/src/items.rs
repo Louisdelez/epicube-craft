@@ -192,6 +192,10 @@ pub fn tool_id(kind: u8, tier: u8) -> Id {
 
 /// (genre, niveau) si l'objet est un outil. Niveaux : bois, pierre, fer, diamant, tamahagane.
 pub fn tool(id: Id) -> Option<(u8, u8)> {
+    if id >= crate::mods::FIRST_ITEM {
+        // Un outil de mod : son genre (decale d'un cran, 0 voulant dire « pas un outil ») et son niveau.
+        return crate::mods::with_item(id, |d| (d.tool, d.tier)).filter(|(k, _)| (1..=5).contains(k)).map(|(k, t)| (k - 1, t.min(4)));
+    }
     if (TOOL_BASE..TOOL_BASE + 20).contains(&id) {
         let k = id - TOOL_BASE;
         Some(((k / 4) as u8, (k % 4) as u8))
@@ -203,6 +207,9 @@ pub fn tool(id: Id) -> Option<(u8, u8)> {
 }
 
 pub fn max_dur(id: Id) -> u16 {
+    if let Some(d) = crate::mods::with_item(id, |d| d.durability) {
+        return d;
+    }
     if let Some((slot, tier)) = armor(id) {
         // Le plastron dure plus que le casque ; le diamant, six fois plus que le cuir.
         return [11, 16, 15, 13][slot as usize] * [5, 9, 15, 7, 33, 37][tier as usize];
@@ -242,6 +249,10 @@ pub struct Weapon {
 pub fn weapon(held: Option<Id>) -> Weapon {
     let w = |dmg: f64, speed: f64, reach: f64, knock: f64, wear: u16| Weapon { dmg, speed, reach, knock, wear };
     let Some(id) = held else { return w(1.0, 4.0, 0.0, 1.0, 0) };
+    // Une arme de mod : ses degats, a la cadence d'un katana.
+    if let Some(dmg) = crate::mods::with_item(id, |d| d.damage as f64).filter(|d| *d > 0.0) {
+        return w(dmg, 1.6, 0.0, 1.0, 1);
+    }
     match tool(id) {
         Some((kind, tier)) => {
             let t = tier as usize;
@@ -277,6 +288,9 @@ pub fn draw_power(held: f64) -> f64 {
 }
 
 pub fn max_stack(id: Id) -> u8 {
+    if let Some(n) = crate::mods::with_item(id, |d| if d.durability > 0 { 1 } else { d.stack.clamp(1, 64) }) {
+        return n;
+    }
     if id == KUNAI {
         16
     } else if max_dur(id) > 0 || matches!(id, BUCKET | WATER_BUCKET | LAVA_BUCKET | CART | MISO_SOUP | NABE | GREEN_TEA) || id == BED as Id {
@@ -289,6 +303,9 @@ pub fn max_stack(id: Id) -> u8 {
 /// (faim, saturation) rendues par un aliment. La saturation est une reserve cachee :
 /// elle se vide avant la faim, et c'est elle qui fait la valeur d'un vrai repas.
 pub fn meal(id: Id) -> Option<(f64, f64)> {
+    if id >= crate::mods::FIRST_ITEM {
+        return crate::mods::with_item(id, |d| (d.food as f64, d.saturation as f64)).filter(|m| m.0 > 0.0);
+    }
     Some(match id {
         APPLE | PEACH => (4.0, 2.4),
         BREAD => (5.0, 6.0),
@@ -360,6 +377,9 @@ pub fn compost_chance(id: Id) -> f64 {
 }
 /// Tuile de l'atlas qui represente l'objet dans l'inventaire.
 pub fn icon(id: Id) -> u16 {
+    if let Some(t) = crate::mods::with_item(id, |d| d.tile) {
+        return t;
+    }
     if id < 256 {
         // Les plaques minces se reconnaissent a leur dessus.
         let face = if shape(id as B) == Shape::Thin { 2 } else { 4 };
@@ -400,6 +420,8 @@ pub fn place_block(id: Id) -> Option<B> {
         STRING => Some(TRIPWIRE),
         SOY_BEANS => Some(SOY),
         KABOCHA_SEEDS => Some(STEM),
+        // Les numeros reserves aux mods n'existent que si un mod de la partie les a pris.
+        160..=255 if crate::mods::with(id as B, |_| ()).is_none() => None,
         1..=255 if !matches!(id as B, WATER | LAVA | WHEAT | CARROT | WIRE | PISTON_HEAD | TRIPWIRE | SOY | STEM) => Some(id as B),
         _ => None,
     }
@@ -442,6 +464,9 @@ pub fn replaceable(b: B) -> bool {
 
 /// Durete : < 0 incassable, 0 instantane.
 pub fn hardness(b: B) -> f64 {
+    if let Some(h) = crate::mods::with(b, |d| d.hardness as f64) {
+        return h;
+    }
     match b {
         AIR | WATER | LAVA | BEDROCK => -1.0,
         TALLGRASS | FLOWER | SAPLING | WHEAT | CARROT | SOY | TEA | STEM | LOTUS | ONIBI | TORCH | WIRE | LEVER | SIGTORCH | EXPLOSIVE | REPEATER | COMPARATOR | BUTTON | TRIPWIRE | HOOK => 0.0,
@@ -467,6 +492,14 @@ pub fn hardness(b: B) -> f64 {
 
 /// Genre d'outil qui accelere le minage du bloc.
 fn best_tool(b: B) -> Option<u8> {
+    if b >= crate::mods::FIRST_BLOCK {
+        return match crate::mods::with(b, |d| d.tool)? {
+            crate::mods::tool::PICK => Some(PICK),
+            crate::mods::tool::AXE => Some(AXE),
+            crate::mods::tool::SHOVEL => Some(SHOVEL),
+            _ => None,
+        };
+    }
     match b {
         STONE | COBBLE | BRICK | FURNACE | GOLD_ORE | IRON_ORE | COAL_ORE | DIAMOND_ORE | VOLT_ORE | IRON_BLOCK
         | OBSIDIAN | ABYSS_ROCK | ZENITH_STONE | ICE | LAMP | PISTON | STICKY_PISTON | PISTON_HEAD | OBSERVER | VOLT_BLOCK
@@ -514,6 +547,12 @@ pub fn break_time(b: B, held: Option<Id>) -> Option<f64> {
 /// Objets laisses par un bloc casse.
 pub fn drops(b: B, m: u8, rng: &mut Rng) -> Vec<Stack> {
     let one = |id: Id, n: i32| vec![Stack::new(id, n as u8)];
+    // Bloc de mod : lui-meme, l'objet que le mod a choisi, ou rien.
+    match crate::mods::with(b, |d| d.drop) {
+        Some(crate::mods::DROP_NOTHING) => return vec![],
+        Some(0) | None => {}
+        Some(id) => return one(id, 1),
+    }
     match b {
         AIR | WATER | LAVA | BEDROCK | GLASS | ICE | PISTON_HEAD | SPAWNER | ONIBI | GATEWAY => vec![],
         ABYSS_PORTAL if m & 2 != 0 => vec![],
@@ -598,6 +637,14 @@ pub fn drops(b: B, m: u8, rng: &mut Rng) -> Vec<Stack> {
 }
 
 pub fn name(id: Id) -> String {
+    if let Some(n) = crate::mods::with_item(id, |d| d.name.clone()) {
+        return n;
+    }
+    if id < 256 {
+        if let Some(n) = crate::mods::with(id as B, |d| d.name.clone()) {
+            return n;
+        }
+    }
     if let Some((kind, tier)) = tool(id) {
         // Un katana de bois est un sabre d'entrainement.
         if (kind, tier) == (SWORD, 0) {

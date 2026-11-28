@@ -458,10 +458,41 @@ pub const ZENITH: u8 = 2;
 
 /// Genere un chunk de la dimension demandee.
 pub fn generate(dim: u8, seed: u32, cx: i32, cz: i32) -> Chunk {
-    match dim {
+    let mut c = match dim {
         ABYSS => abyss(seed, cx, cz),
         ZENITH => zenith(seed, cx, cz),
         _ => surface(seed, cx, cz),
+    };
+    let content = crate::mods::content();
+    if !content.ores.is_empty() {
+        mod_ores(&mut c, &content.ores, dim, seed, cx, cz);
+    }
+    c
+}
+
+/// Filons des mods : des amas semes dans le chunk, toujours les memes pour une meme graine.
+fn mod_ores(c: &mut Chunk, ores: &[crate::mods::OreDef], dim: u8, seed: u32, cx: i32, cz: i32) {
+    for (k, ore) in ores.iter().enumerate().filter(|(_, o)| o.dim == dim) {
+        let mut rng = crate::util::Rng::new(hash(cx, k as i32, cz, seed ^ 0x0E5_0E5) as u64 | 1 << 40);
+        let top = (ore.max_y as i32).min(crate::chunk::H as i32 - 1);
+        let low = (ore.min_y as i32).clamp(1, top);
+        for _ in 0..ore.veins {
+            let (mut x, mut y, mut z) = (rng.range(0, 16), rng.range(low, top + 1), rng.range(0, 16));
+            for _ in 0..ore.size.max(1) {
+                let here = c.get(x as usize, y as usize, z as usize);
+                // Sans bloc designe, le filon prend la place de la roche du lieu.
+                let rock = ore.replace == AIR && matches!(here, STONE | SLATE | ABYSS_ROCK | ZENITH_STONE);
+                if rock || (ore.replace != AIR && here == ore.replace) {
+                    c.set(x as usize, y as usize, z as usize, ore.block);
+                }
+                // L'amas s'etend d'un pas au hasard, sans sortir du chunk.
+                match rng.range(0, 3) {
+                    0 => x = (x + rng.range(-1, 2)).clamp(0, 15),
+                    1 => y = (y + rng.range(-1, 2)).clamp(low, top),
+                    _ => z = (z + rng.range(-1, 2)).clamp(0, 15),
+                }
+            }
+        }
     }
 }
 

@@ -8,6 +8,8 @@ use shared::physics::d::{move_body, overlaps};
 pub struct Mob {
     pub id: u32,
     pub kind: u8,
+    /// Creature de mod dont elle a l'apparence et les caracteristiques (0 : aucune).
+    pub skin: u8,
     pub pos: Vec3,
     pub vel: Vec3,
     pub yaw: f64,
@@ -93,14 +95,34 @@ fn loot(kind: u8, rng: &mut Rng) -> Vec<Stack> {
 
 impl Server {
     fn mob_msg(m: &Mob) -> ServerMsg {
-        ServerMsg::MobSpawn { id: m.id, kind: m.kind, pos: m.pos.to_array(), yaw: m.yaw, baby: m.age < 0.0 }
+        ServerMsg::MobSpawn { id: m.id, kind: m.kind, skin: m.skin, pos: m.pos.to_array(), yaw: m.yaw, baby: m.age < 0.0 }
     }
 
     pub(crate) fn mob_msgs(&self) -> Vec<ServerMsg> {
         self.mobs.iter().map(Self::mob_msg).collect()
     }
 
+    /// Fait naitre une creature du jeu. Une part d'entre elles prend la forme d'une creature de mod
+    /// batie sur ce genre, selon la rarete que le mod a fixee.
     pub(crate) fn spawn_mob(&mut self, kind: u8, pos: Vec3, age: f64, hp: f64) {
+        let content = shared::mods::content();
+        for d in content.mobs.iter().filter(|d| d.base == kind && d.rarity > 0.0) {
+            if self.rng.d() < d.rarity as f64 {
+                return self.spawn_skin(kind, d.id, pos, age, d.hp as f64);
+            }
+        }
+        self.spawn_skin(kind, 0, pos, age, hp);
+    }
+
+    /// Fait naitre la creature de mod de ce nom complet.
+    pub(crate) fn spawn_mod_mob(&mut self, key: &str, pos: Vec3) -> bool {
+        let content = shared::mods::content();
+        let Some(d) = content.mobs.iter().find(|d| d.key == key) else { return false };
+        self.spawn_skin(d.base, d.id, pos, 0.0, d.hp as f64);
+        true
+    }
+
+    fn spawn_skin(&mut self, kind: u8, skin: u8, pos: Vec3, age: f64, hp: f64) {
         // Paisible : aucune creature hostile ne nait (le Ryujin, lui, garde son ciel).
         if self.rules.difficulty == shared::rules::PEACEFUL && mk::hostile(kind) && kind != mk::WYRM {
             return;
@@ -110,6 +132,7 @@ impl Server {
         let m = Mob {
             id,
             kind,
+            skin,
             pos,
             vel: Vec3::ZERO,
             yaw: self.rng.d() * 6.28,
@@ -151,7 +174,8 @@ impl Server {
     pub(crate) fn mob_saves(&self) -> Vec<MobSave> {
         self.mobs
             .iter()
-            .filter(|m| !mk::hostile(m.kind))
+            // Les creatures de mods ne sont pas enregistrees : leur mod peut ne plus etre la.
+            .filter(|m| !mk::hostile(m.kind) && m.skin == 0)
             .map(|m| MobSave { kind: m.kind, pos: m.pos.to_array(), hp: m.hp, age: m.age })
             .collect()
     }
@@ -364,7 +388,8 @@ impl Server {
                         let reach = (ppos.y - m.pos.y).abs() < 1.8 && flat < hw + 1.0;
                         if reach && m.atk_cd <= 0.0 {
                             m.atk_cd = 1.0;
-                            acts.push(Act::Hurt(*pid, mk::melee(m.kind), dir * 7.0 + Vec3::Y * 4.5));
+                            let dmg = shared::mods::with_mob(m.skin, |d| d.damage as f64).filter(|d| *d > 0.0).unwrap_or_else(|| mk::melee(m.kind));
+                            acts.push(Act::Hurt(*pid, dmg, dir * 7.0 + Vec3::Y * 4.5));
                         }
                         // L'ombre comble la distance en se teleportant.
                         if m.kind == mk::SHADE && dist > 9.0 && m.tp_cd <= 0.0 {
@@ -472,7 +497,17 @@ impl Server {
             if m.hp <= 0.0 {
                 m.dead = true;
                 wyrm_dead |= m.kind == mk::WYRM;
-                for st in loot(m.kind, &mut self.rng) {
+                self.mod_deaths.push((self.dim, m.kind, m.skin, m.pos));
+                // Une creature de mod laisse le butin que son mod a choisi.
+                let own = shared::mods::with_mob(m.skin, |d| d.loot.clone());
+                let stacks = match own {
+                    Some(list) => list.into_iter().filter_map(|(item, lo, hi)| {
+                        let n = self.rng.range(lo as i32, hi.max(lo) as i32 + 1);
+                        (n > 0).then(|| Stack::new(item, n.min(64) as u8))
+                    }).collect(),
+                    None => loot(m.kind, &mut self.rng),
+                };
+                for st in stacks {
                     // Un animal tondu n'a plus de fourrure a donner.
                     if !(m.shorn > 0.0 && st.id == WOOL as u16) {
                         acts.push(Act::Drop(m.pos + Vec3::Y * 0.4, st));

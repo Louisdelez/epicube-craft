@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["shared", "server", "client"]
+members = ["shared", "server", "client", "modkit"]
+# Les mods d'exemple se compilent a part, en WebAssembly.
+exclude = ["exemples"]
 
 [profile.dev]
 opt-level = 2

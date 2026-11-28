@@ -16,11 +16,13 @@ mod gfx;
 mod hud;
 mod itemdefs;
 mod items3d;
+mod library;
 mod menu;
 mod mesh;
 mod mesher;
 mod mic;
 mod models;
+mod mods;
 mod net;
 mod pixels;
 mod prof;
@@ -184,6 +186,8 @@ struct Remote {
 
 struct MobView {
     kind: u8,
+    /// Creature de mod dont elle a la taille et la teinte (0 : aucune).
+    skin: u8,
     target: Vec3,
     shown: Vec3,
     yaw: f32,
@@ -509,6 +513,8 @@ pub struct App {
     inbox: std::collections::VecDeque<ServerMsg>,
     epoch: u32,
     joined: bool,
+    /// Mods de la partie : annonces par le serveur, telecharges au besoin, puis charges.
+    pub mods: Option<mods::Mods>,
     lost: Option<String>,
     pos: Vec3,
     vel: Vec3,
@@ -642,6 +648,7 @@ impl App {
             inbox: std::collections::VecDeque::new(),
             epoch: 0,
             joined: false,
+            mods: None,
             lost: None,
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
@@ -727,7 +734,7 @@ impl App {
 
     /// La souris doit-elle etre capturee (mode jeu) ?
     fn want_grab(&self) -> bool {
-        self.joined && self.lost.is_none() && self.window == WindowKind::None && !self.dead() && !self.chat.open
+        self.joined && self.lost.is_none() && self.window == WindowKind::None && !self.dead() && !self.chat.open && !self.mods.as_ref().is_some_and(|m| m.screen_open())
     }
 
     fn poll_net(&mut self, gfx: &mut Gfx) {
@@ -920,14 +927,14 @@ impl App {
                     }
                 }
                 ServerMsg::Info { text } => self.info = Some((text, 4.0)),
-                ServerMsg::MobSpawn { id, kind, pos, yaw, baby } => {
+                ServerMsg::MobSpawn { id, kind, skin, pos, yaw, baby } => {
                     let (p, yaw) = (self.loc(pos), yaw as f32);
                     // Renvoye aussi quand un petit devient adulte : on garde alors ce qui est affiche.
                     let old = self.mobs.remove(&id);
                     let shown = old.as_ref().map(|m| m.shown).unwrap_or(p);
                     let trail = old.map(|m| m.trail).unwrap_or_default();
                     let voice = 3.0 + (id % 13) as f32;
-                    self.mobs.insert(id, MobView { kind, target: p, shown, yaw, baby, hurt: 0.0, walk: 0.0, trail, voice });
+                    self.mobs.insert(id, MobView { kind, skin, target: p, shown, yaw, baby, hurt: 0.0, walk: 0.0, trail, voice });
                 }
                 ServerMsg::MobPos { id, pos, yaw } => {
                     let p = self.loc(pos);
@@ -1018,6 +1025,18 @@ impl App {
                 ServerMsg::Sound { pos, kind, pitch } => {
                     sounds::server(kind, pitch, IVec3::from(self.loc_cell(pos)).as_vec3() + Vec3::splat(0.5));
                 }
+                ServerMsg::Play { name, pos, volume } => match pos {
+                    Some(p) => audio::play_at(&name, self.loc(p), volume.clamp(0.0, 2.0)),
+                    None => audio::play(&name, volume.clamp(0.0, 2.0)),
+                },
+                m @ (ServerMsg::Mods { .. } | ServerMsg::ModPart { .. } | ServerMsg::ModMsg { .. }) => match mods::on_msg(&mut self.mods, m) {
+                    Ok(replies) => {
+                        for r in replies {
+                            self.net.send(r);
+                        }
+                    }
+                    Err(why) => self.lost = Some(why),
+                },
             }
         }
     }
@@ -1215,7 +1234,12 @@ impl App {
 
     /// Objets de l'inventaire creatif : tous les blocs que l'on peut poser, puis tous les objets.
     pub fn palette() -> Vec<u16> {
-        (1..256u16).filter(|id| items::place_block(*id) == Some(*id as u8)).chain(items3d::ids()).collect()
+        let mods = shared::mods::content();
+        let mut all: Vec<u16> = (1..256u16).filter(|id| items::place_block(*id) == Some(*id as u8)).chain(items3d::ids()).chain(mods.items.iter().map(|d| d.id)).collect();
+        // Une plante de mod est a la fois un bloc posable et un objet plat : elle ne figure qu'une fois.
+        let mut seen = HashSet::new();
+        all.retain(|id| seen.insert(*id));
+        all
     }
 
     fn close_window(&mut self) {
@@ -1259,7 +1283,12 @@ impl App {
                 KeyCode::F6 => self.chunk_borders = !self.chunk_borders,
                 KeyCode::F4 => self.cycle_mode(),
                 KeyCode::Escape => {
-                    if self.window != WindowKind::None {
+                    if self.mods.as_ref().is_some_and(|m| m.screen_open()) {
+                        // La fenetre d'un mod se ferme comme celles du jeu.
+                        if let Some(m) = self.mods.as_mut() {
+                            m.close_screens();
+                        }
+                    } else if self.window != WindowKind::None {
                         self.close_window();
                     } else {
                         pause = true;
@@ -1894,7 +1923,12 @@ impl App {
             if m.kind == mk::BOMBYX {
                 l[1] = l[1].max(180);
             }
-            let k = if m.baby { 0.55 } else { 1.0 };
+            let mut k = if m.baby { 0.55 } else { 1.0 };
+            // Une creature de mod : la silhouette de sa creature de base, a sa taille et a sa teinte.
+            let look = shared::mods::with_mob(m.skin, |d| (d.scale, d.color));
+            if let Some((scale, _)) = look {
+                k *= scale;
+            }
             for (i, tr) in m.trail.iter().enumerate().skip(1) {
                 let half = 1.05 - i as f32 * 0.06;
                 // Corps du dragon : anneaux de jade, un sur trois dore.
@@ -1906,8 +1940,15 @@ impl App {
                 push_box(&mut ents, *tr, yaw_basis(m.yaw), Vec3::Y, Vec3::splat(half), col, Tex::Flat, l);
             }
             // Flash rouge quand la creature vient d'etre touchee.
-            let col = if m.hurt > 0.0 { [255, 110, 110, 255] } else { [255; 4] };
-            if let Some(model) = models.get(m.kind as usize) {
+            let mut col = if m.hurt > 0.0 { [255, 110, 110, 255] } else { [255; 4] };
+            if let Some((_, tint)) = look {
+                for i in 0..3 {
+                    col[i] = (col[i] as u16 * tint[i] as u16 / 255) as u8;
+                }
+            }
+            // Une creature de mod peut avoir son propre modele ; sinon, celui de sa creature de base.
+            let own = self.mods.as_ref().and_then(|mods| mods.models.get(&m.skin));
+            if let Some(model) = own.or_else(|| models.get(m.kind as usize)) {
                 push_model(&mut ents, model, m.shown, m.yaw, k, m.walk, col, l);
             }
         }
@@ -2007,6 +2048,35 @@ impl App {
 
         let mut ui = Ui::new(w, h);
         self.draw_ui(&mut ui, inp, grabbed && active, &gfx.backend, gfx.meshes.len(), models, s);
+        let here = self.abs(self.pos);
+        if let Some(m) = self.mods.as_mut() {
+            if let Some((name, done, total, part)) = m.progress() {
+                // Avant d'entrer : les mods du serveur arrivent, on dit ou l'on en est.
+                let line = format!("Téléchargement des mods du serveur : {name} ({}/{total}, {:.0} %)", done + 1, part * 100.0);
+                let (bw, y) = (220.0 * s, (h * 0.5).floor());
+                ui.text(((w - Ui::text_width(&line, s)) / 2.0).floor(), y - 14.0 * s, s, &line, [1.0; 4]);
+                ui.rect(((w - bw) / 2.0).floor(), y, bw, 4.0 * s, [0.05, 0.06, 0.12, 1.0]);
+                ui.rect(((w - bw) / 2.0).floor(), y, (bw * (done as f32 + part) / total.max(1) as f32).floor(), 4.0 * s, [0.85, 0.65, 0.16, 1.0]);
+            }
+            if m.ready && self.joined {
+                let screen = m.screen_open();
+                if active && !self.chat.open && (grabbed || screen) {
+                    for k in inp.pressed.iter().filter(|k| **k != KeyCode::Escape) {
+                        m.key(&format!("{k:?}"));
+                    }
+                }
+                // Fenetre de mod ouverte : la souris et le texte tape lui reviennent.
+                let click = if inp.lmb_click { Some(0) } else if inp.rmb_click { Some(1) } else { None };
+                m.pointer((inp.mouse.0 / s, inp.mouse.1 / s), click.filter(|_| screen && active), if screen { &inp.text } else { "" });
+                let (out, lines) = m.frame(&mut ui, s, here);
+                for msg in out {
+                    self.net.send(msg);
+                }
+                for line in lines {
+                    self.chat.push(line, shared::proto::chat::INFO);
+                }
+            }
+        }
         FrameOut { u, clear: horizon, eye, dir, sky: sky_v, ents, overlay, ui, tan_half: (self.fov.to_radians() / 2.0).tan(), pause }
     }
 }
@@ -2043,6 +2113,8 @@ pub struct Shell {
     /// Dans les parametres : la page des volumes est-elle affichee ?
     pub sound_page: bool,
     pub perf_page: bool,
+    /// La page des mods, quand elle est ouverte.
+    pub library: Option<library::Library>,
     /// Micro ouvert pour le chat vocal, erreur d'ouverture s'il y en a eu une, et test « s'entendre ».
     pub mic: Option<mic::Mic>,
     pub mic_error: Option<String>,
@@ -2173,7 +2245,12 @@ impl Shell {
             Some(n.to_string())
         };
         let seed = label.as_deref().and_then(|t| t.parse::<i64>().ok()).map(shared::seed::fold).unwrap_or(1337);
-        match server::spawn_local(seed, Some(dir), self.settings.lan) {
+        // Les mods installes par le joueur s'appliquent a sa partie.
+        let (packs, problems) = shared::mods::load_dir(Path::new(shared::mods::DIR));
+        for p in problems {
+            eprintln!("Mod ignoré - {p}");
+        }
+        match server::spawn_local(seed, Some(dir), self.settings.lan, packs) {
             Ok(h) => {
                 let addr = format!("127.0.0.1:{}", h.port);
                 self.local = Some(h);
@@ -2197,6 +2274,9 @@ impl Shell {
         self.game = None;
         self.stop_local();
         gfx.meshes.clear();
+        // Les blocs et les textures des mods de cette partie s'en vont avec elle.
+        shared::mods::clear_content();
+        audio::drop_mod_clips();
         self.screen = Screen::Title;
     }
 
@@ -2207,6 +2287,7 @@ impl Shell {
             Action::Join => {
                 let a = self.settings.address.clone();
                 let addr = if a.contains(':') { a } else { format!("{a}:{}", shared::DEFAULT_PORT) };
+                shared::mods::clear_content();
                 self.connect(&addr);
             }
             Action::Quit => self.quit = true,
@@ -2269,6 +2350,7 @@ impl Shell {
                 Screen::Settings | Screen::Multi | Screen::Solo => Screen::Title,
                 s => s,
             };
+            self.library = None;
             self.field = 0;
         }
         if inp.pressed.contains(&KeyCode::Tab) && matches!(self.screen, Screen::Multi | Screen::Solo) {
@@ -2288,6 +2370,10 @@ impl Shell {
             Some(g) => Some(g.frame(dt, inp, gfx, grabbed || (self.showcase && active), active, &self.settings, &self.models, &self.shapes)),
             None => None,
         };
+        // Les mods viennent d'arriver : leurs textures entrent dans l'atlas.
+        if let Some(img) = self.game.as_mut().and_then(|g| g.mods.as_mut()).and_then(|m| m.paint.take()) {
+            gfx.set_mod_atlas(&img.0);
+        }
         let mut ui = match &mut out {
             Some(o) => std::mem::replace(&mut o.ui, Ui::new(w, h)),
             None => Ui::new(w, h),
@@ -2626,6 +2712,7 @@ fn main() {
         world: arg("--world").unwrap_or_else(|| "monde".to_string()),
         quit: false,
         showcase: false,
+        library: None,
     };
 
     if gfx.software {

@@ -22,7 +22,31 @@ fn add(v: &mut Vec<Recipe>, rows: &[&str], map: &[(char, Id)], out: Id, n: u8) {
     v.push(Recipe { w, h: rows.len(), cells, out, n });
 }
 
+/// Recettes du jeu suivies de celles des mods de la partie. Remplacees a chaque changement de mods ;
+/// l'ancienne liste reste en memoire (quelques centaines d'octets), car on a pu en garder des references.
+static ALL: std::sync::RwLock<Option<&'static [Recipe]>> = std::sync::RwLock::new(None);
+
+/// Toutes les recettes : celles du jeu, puis celles des mods. Leur rang sert a les designer sur le reseau.
 pub fn recipes() -> &'static [Recipe] {
+    ALL.read().ok().and_then(|a| *a).unwrap_or_else(builtin)
+}
+
+/// Ajoute les recettes des mods a la suite de celles du jeu.
+pub fn set_mod_recipes(defs: &[crate::mods::RecipeDef]) {
+    let mut all: Vec<Recipe> = builtin().iter().map(|r| Recipe { w: r.w, h: r.h, cells: r.cells.clone(), out: r.out, n: r.n }).collect();
+    for d in defs {
+        let (w, h) = (d.w as usize, d.h as usize);
+        if (1..=3).contains(&w) && (1..=3).contains(&h) && d.cells.len() == w * h && d.out != 0 && d.n > 0 {
+            all.push(Recipe { w, h, cells: d.cells.clone(), out: d.out, n: d.n });
+        }
+    }
+    if let Ok(mut slot) = ALL.write() {
+        // Sans recette de mod, on revient simplement a la liste du jeu.
+        *slot = if defs.is_empty() { None } else { Some(Box::leak(all.into_boxed_slice())) };
+    }
+}
+
+fn builtin() -> &'static [Recipe] {
     static R: OnceLock<Vec<Recipe>> = OnceLock::new();
     R.get_or_init(|| {
         let mut v = Vec::new();
@@ -201,6 +225,9 @@ pub fn can_craft(r: &Recipe, inv: &[Slot]) -> bool {
 
 /// Resultat de la cuisson d'un objet au four.
 pub fn smelt(id: Id) -> Option<Id> {
+    if let Some(out) = crate::mods::content().smelts.iter().find(|d| d.input == id).map(|d| d.out) {
+        return Some(out);
+    }
     Some(match id {
         x if x == IRON_ORE as Id => IRON_INGOT,
         x if x == GOLD_ORE as Id => GOLD_INGOT,
@@ -227,6 +254,9 @@ pub fn grills(id: Id) -> bool {
 }
 /// Duree de combustion en secondes (0 = pas un combustible).
 pub fn fuel(id: Id) -> f64 {
+    if let Some(f) = crate::mods::with_item(id, |d| d.fuel as f64) {
+        return f;
+    }
     match id {
         COAL => 80.0,
         LAVA_BUCKET => 1000.0,

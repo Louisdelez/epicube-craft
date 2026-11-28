@@ -1,0 +1,7 @@
+{
+  "id": "bienvenue",
+  "name": "Bienvenue",
+  "version": "1.0.0",
+  "description": "Salue les joueurs et ajoute la commande /soin. Exemple de petit mod en Lua.",
+  "author": "Epicube"
+}

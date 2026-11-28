@@ -212,12 +212,14 @@ fn halve(src: &[u8], w: usize) -> Vec<u8> {
     out
 }
 
-fn write_atlas(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &[u8]) {
+/// Ecrit une moitie de l'atlas (un carre de AT pixels) : celle du jeu en haut, celle des mods en bas.
+fn write_atlas(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &[u8], mods: bool) {
     let mut level = atlas.to_vec();
     let mut w = AT;
     for mip in 0..MIPS {
+        let origin = wgpu::Origin3d { x: 0, y: if mods { w as u32 } else { 0 }, z: 0 };
         queue.write_texture(
-            wgpu::ImageCopyTexture { texture: tex, mip_level: mip, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyTexture { texture: tex, mip_level: mip, origin, aspect: wgpu::TextureAspect::All },
             &level,
             wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * w as u32), rows_per_image: Some(w as u32) },
             wgpu::Extent3d { width: w as u32, height: w as u32, depth_or_array_layers: 1 },
@@ -369,7 +371,8 @@ impl Gfx {
         // Atlas de textures.
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
-            size: wgpu::Extent3d { width: AT as u32, height: AT as u32, depth_or_array_layers: 1 },
+            // Deux carres l'un sous l'autre : les textures du jeu, puis celles des mods.
+            size: wgpu::Extent3d { width: AT as u32, height: 2 * AT as u32, depth_or_array_layers: 1 },
             mip_level_count: MIPS,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -377,7 +380,7 @@ impl Gfx {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        write_atlas(&queue, &tex, atlas);
+        write_atlas(&queue, &tex, atlas, false);
         let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             // Pixel art : chaque pixel reste net de pres ; de loin, le melange entre niveaux
@@ -574,7 +577,12 @@ impl Gfx {
     }
 
     pub fn set_atlas(&mut self, atlas: &[u8]) {
-        write_atlas(&self.queue, &self.atlas_tex, atlas);
+        write_atlas(&self.queue, &self.atlas_tex, atlas, false);
+    }
+
+    /// Textures des mods de la partie : un carre de AT pixels, range sous l'atlas du jeu.
+    pub fn set_mod_atlas(&mut self, tiles: &[u8]) {
+        write_atlas(&self.queue, &self.atlas_tex, tiles, true);
     }
 
     /// Taille, en pixels, de l'image de la scene avant agrandissement.

@@ -44,6 +44,12 @@ fn vs_main(
     return o;
 }
 
+// L'atlas est deux fois plus haut que large : la moitie du haut porte les textures du jeu, celle du
+// bas celles des mods. Les coordonnees restent celles d'un carre ; une tuile de mod a un v entre 1 et 2.
+fn at(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(uv.x, uv.y * 0.5);
+}
+
 // light.x = lumiere du ciel, light.y = lumiere des blocs, light.z = 1 pour ignorer eclairage et brouillard.
 fn shade(i: VO, t: vec4<f32>) -> vec3<f32> {
     let base = t.rgb * i.color.rgb;
@@ -66,7 +72,7 @@ fn shade(i: VO, t: vec4<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_opaque(i: VO) -> @location(0) vec4<f32> {
-    let t = textureSample(atlas, samp, i.uv);
+    let t = textureSample(atlas, samp, at(i.uv));
     if (t.a < 0.3) {
         discard;
     }
@@ -75,7 +81,7 @@ fn fs_opaque(i: VO) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_trans(i: VO) -> @location(0) vec4<f32> {
-    let t = textureSample(atlas, samp, i.uv);
+    let t = textureSample(atlas, samp, at(i.uv));
     let a = t.a * i.color.a;
     if (a < 0.01) {
         discard;
@@ -100,5 +106,5 @@ fn vs_ui(@location(0) pos: vec2<f32>, @location(1) uv: vec2<f32>, @location(2) c
 
 @fragment
 fn fs_ui(i: UO) -> @location(0) vec4<f32> {
-    return textureSampleLevel(atlas, samp_ui, i.uv, 0.0) * i.color;
+    return textureSampleLevel(atlas, samp_ui, at(i.uv), 0.0) * i.color;
 }

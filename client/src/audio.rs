@@ -208,6 +208,21 @@ fn decode(path: &Path) -> Option<Clip> {
     Some(Clip { rate, data })
 }
 
+/// Ajoute le bruitage d'un mod, lu dans son archive. Son nom est « mod:fichier », sans extension.
+pub fn add_clip(name: &str, bytes: Vec<u8>) -> bool {
+    let Ok(src) = Decoder::new(std::io::Cursor::new(bytes)) else { return false };
+    let (ch, rate) = (src.channels().max(1) as usize, src.sample_rate());
+    // Un bruitage, pas un morceau : une minute au plus.
+    let all: Vec<f32> = src.convert_samples().take(rate as usize * ch * 60).collect();
+    let data = all.chunks(ch).map(|c| c.iter().sum::<f32>() / ch as f32).collect();
+    with(|a| a.clips.entry(name.to_string()).or_default().push(Clip { rate, data })).is_some()
+}
+
+/// Retire les bruitages des mods (leur nom contient « : »).
+pub fn drop_mod_clips() {
+    with(|a| a.clips.retain(|name, _| !name.contains(':')));
+}
+
 /// Ouvre la sortie audio et charge le dossier `dir`. Renvoie un compte rendu, ou None si la machine est muette.
 pub fn init(dir: &Path, vol: Volumes) -> Option<String> {
     let (stream, handle) = OutputStream::try_default().ok()?;

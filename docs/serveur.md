@@ -22,6 +22,8 @@ epicube-craft-server --port 25600 --seed 1337 --world monde
 | `--world` | nom du monde, dans le dossier `saves` | `serveur` |
 | `--comptes` | `obligatoires` ou `facultatifs` : exiger un compte vérifié | celui de `comptes.txt` |
 
+Les [mods](mods.md) déposés dans le dossier `mods`, à côté du serveur, sont chargés au démarrage et envoyés automatiquement aux joueurs qui le rejoignent.
+
 `Ctrl+C` sauvegarde le monde puis arrête le serveur. Pour jouer depuis Internet, il faut ouvrir ce port sur le routeur de l'hôte.
 
 Le serveur peut n'admettre que les joueurs connectés à leur **compte** : c'est le fichier `comptes.txt`, créé à côté de lui au premier démarrage. Voir [Comptes des joueurs](comptes.md).

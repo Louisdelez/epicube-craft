@@ -40,7 +40,12 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut handle = match server::start(listener, seed, Some(dir.clone()), accounts) {
+    // Mods : tout ce qui se trouve dans le dossier mods, a cote du serveur.
+    let (mods, problems) = shared::mods::load_dir(std::path::Path::new(shared::mods::DIR));
+    for p in problems {
+        eprintln!("Mod ignoré - {p}");
+    }
+    let mut handle = match server::start_with_mods(listener, seed, Some(dir.clone()), accounts, mods) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("Impossible de demarrer le serveur : {e}");

@@ -68,9 +68,23 @@ impl Server {
             return;
         }
         let Some(line) = text.strip_prefix('/') else {
+            if !self.mod_event("chat", Some(id), &[crate::mods::Arg::S(text.to_string())]) {
+                return;
+            }
             println!("<{name}> {text}");
             return self.announce(&format!("<{name}> {text}"), chat::SAY);
         };
+        // Une commande que le jeu ne connait pas peut etre celle d'un mod.
+        let (first, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        if cmd::find(first).is_none() {
+            if let Some(out) = self.mod_command(id, first, rest.trim()) {
+                return match out {
+                    Ok(reply) if reply.is_empty() => {}
+                    Ok(reply) => self.tell(id, &reply, chat::INFO),
+                    Err(why) => self.tell(id, &why, chat::ERROR),
+                };
+            }
+        }
         match self.command(id, &name, line) {
             Ok(reply) if reply.is_empty() => {}
             Ok(reply) => self.tell(id, &reply, chat::INFO),
@@ -101,7 +115,8 @@ impl Server {
             "aide" => match args.first() {
                 Some(w) => cmd::find(w).map(|s| format!("{} - {}", cmd::usage(s), s.help)).ok_or_else(|| format!("Commande inconnue : /{w}")),
                 None => {
-                    let list: Vec<String> = cmd::COMMANDS.iter().filter(|c| self.rules.cheats || !c.cheat).map(|c| format!("/{}", c.name)).collect();
+                    let mut list: Vec<String> = cmd::COMMANDS.iter().filter(|c| self.rules.cheats || !c.cheat).map(|c| format!("/{}", c.name)).collect();
+                    list.extend(self.mods.iter().flat_map(|h| h.commands()).map(|c| format!("/{}", c.0)));
                     Ok(format!("Commandes : {}. /aide <commande> pour le détail.", list.join(" ")))
                 }
             },

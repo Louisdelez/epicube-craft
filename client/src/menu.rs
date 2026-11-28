@@ -282,6 +282,90 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             let (x1, x2) = ((w / 2.0 - cw - 3.0 * s).floor(), (w / 2.0 + 3.0 * s).floor());
             let y0 = (h * 0.06).floor() + 40.0 * s;
             let row = |k: f32| y0 + k * (bh + gap);
+            if let Some(lib) = sh.library.as_mut() {
+                // Page des mods : la bibliotheque d'Epicube Hub et ce qui est installe.
+                lib.poll();
+                let lw = 420.0 * s;
+                let lx = ((w - lw) / 2.0).floor();
+                let state = match &lib.list {
+                    None => "Chargement de la bibliothèque...".to_string(),
+                    Some(Err(e)) => format!("Bibliothèque indisponible : {e}."),
+                    Some(Ok(l)) if l.is_empty() && lib.installed.is_empty() => "Aucun mod dans la bibliothèque pour le moment.".to_string(),
+                    Some(Ok(_)) => "Les mods installés s'appliquent à vos parties solo.".to_string(),
+                };
+                wd.ui.text(((w - Ui::text_width(&state, s)) / 2.0).floor(), y0 - 12.0 * s, s, &state, GREY);
+                // Les mods de la bibliotheque, puis ceux qui ne sont que dans le dossier du joueur.
+                let listed: Vec<crate::library::Entry> = lib.list.as_ref().and_then(|l| l.as_ref().ok()).cloned().unwrap_or_default();
+                let mut rows: Vec<(String, String, String, Option<crate::library::Entry>)> = listed
+                    .iter()
+                    .map(|e| {
+                        let by = if e.author.is_empty() { String::new() } else { format!(" - {}", e.author) };
+                        (e.id.clone(), format!("{} {}{by} ({} ko)", e.name, e.version, e.size.div_ceil(1024)), e.description.clone(), Some(e.clone()))
+                    })
+                    .collect();
+                for i in lib.installed.iter().filter(|i| !listed.iter().any(|e| e.id == i.id)) {
+                    rows.push((i.id.clone(), format!("{} {} (hors bibliothèque)", i.name, i.version), i.description.clone(), None));
+                }
+                const PER_PAGE: usize = 6;
+                let pages = rows.len().div_ceil(PER_PAGE).max(1);
+                lib.page = lib.page.min(pages - 1);
+                let rh = 30.0 * s;
+                let mut clicked: Option<(String, Option<crate::library::Entry>, bool)> = None;
+                for (k, (id, head, about, entry)) in rows.iter().skip(lib.page * PER_PAGE).take(PER_PAGE).enumerate() {
+                    let y = y0 + k as f32 * (rh + 2.0 * s);
+                    wd.ui.bevel(lx, y, lw, rh, s, [0.09, 0.09, 0.12, 0.92], [0.05, 0.05, 0.07, 1.0], [0.3, 0.31, 0.38, 1.0]);
+                    wd.ui.text(lx + 6.0 * s, y + 5.0 * s, s, head, WHITE);
+                    let lines = crate::chatbox::wrap(about, s, lw - 104.0 * s);
+                    if let Some(first) = lines.first() {
+                        let line = if lines.len() > 1 { format!("{first}...") } else { first.clone() };
+                        wd.ui.text(lx + 6.0 * s, y + 17.0 * s, s, &line, GREY);
+                    }
+                    let have = lib.installed(id).map(|i| i.version.clone());
+                    let update = matches!((&have, entry), (Some(v), Some(e)) if *v != e.version);
+                    let label = if lib.busy.as_deref() == Some(id.as_str()) {
+                        "Installation..."
+                    } else if update {
+                        "Mettre à jour"
+                    } else if have.is_some() && lib.removable(id) {
+                        "Supprimer"
+                    } else if have.is_some() {
+                        "Dossier"
+                    } else {
+                        "Installer"
+                    };
+                    if wd.button(lx + lw - 92.0 * s, y + 5.0 * s, 86.0 * s, bh, label) {
+                        clicked = Some((id.clone(), entry.clone(), have.is_some() && !update));
+                    }
+                }
+                if let Some((id, entry, installed)) = clicked {
+                    match entry {
+                        _ if installed => {
+                            if lib.removable(&id) {
+                                lib.remove(&id);
+                            }
+                        }
+                        Some(e) => lib.install(&e),
+                        None => {}
+                    }
+                }
+                let by = y0 + PER_PAGE as f32 * (rh + 2.0 * s) + 2.0 * s;
+                if pages > 1 {
+                    if wd.button(lx, by, 80.0 * s, bh, "Précédent") {
+                        lib.page = lib.page.saturating_sub(1);
+                    }
+                    if wd.button(lx + lw - 80.0 * s, by, 80.0 * s, bh, "Suivant") {
+                        lib.page = (lib.page + 1).min(pages - 1);
+                    }
+                    wd.label(lx, by, lw, bh, &format!("{} / {pages}", lib.page + 1), GREY);
+                }
+                if let Some(note) = &lib.note {
+                    wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), by + bh + 5.0 * s, s, note, [0.6, 1.0, 0.6, 1.0]);
+                }
+                if wd.button(x, by + bh + 18.0 * s, bw, bh, "Retour") {
+                    sh.library = None;
+                }
+                return action;
+            }
             let st = &mut sh.settings;
             if sh.sound_page {
                 // Page du son : quatre volumes.
@@ -433,8 +517,11 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     type_into(&mut st.name, inp, 16, name_char);
                 }
             }
+            if !in_game && wd.button(x2, row(6.0) + 12.0 * s, cw, bh, "Mods") {
+                sh.library = Some(crate::library::Library::open());
+            }
             // Ressources modifiables.
-            let ry = row(7.0) + 14.0 * s;
+            let ry = row(8.0) + 14.0 * s;
             wd.ui.text(x1, ry - 10.0 * s, s, "Ressources (dossier assets) : textures PNG et modèles Blockbench", GREY);
             if wd.button(x1, ry, cw, bh, "Exporter les ressources") {
                 action = Action::Export;

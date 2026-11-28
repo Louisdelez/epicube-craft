@@ -3,7 +3,7 @@ use crate::items::Slot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// Nature d'une ligne de chat.
 pub mod chat {
@@ -106,7 +106,12 @@ pub enum ClientMsg {
     /// Le client s'est trop eloigne de son origine d'affichage : il demande a tout recevoir de nouveau.
     Rebase,
     /// Mesure du delai reseau : le serveur renvoie `t` tel quel, aussitot recu.
-    Ping { t: u64 },
+    Ping { t: u64 },    /// Demande un morceau d'un mod du serveur, a partir de l'octet `offset`.
+    ModWant { hash: crate::mods::Hash, offset: u32 },
+    /// Le joueur a tous les mods annonces : il peut entrer dans la partie.
+    ModsReady,
+    /// Message du script client d'un mod a son script serveur.
+    ModMsg { mod_id: String, name: String, data: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -145,7 +150,8 @@ pub enum ServerMsg {
     DropSpawn { id: u32, pos: [f64; 3], vel: [f64; 3], item: u16 },
     DropRemove { id: u32 },
     Info { text: String },
-    MobSpawn { id: u32, kind: u8, pos: [f64; 3], yaw: f64, baby: bool },
+    /// `skin` : numero de la creature de mod (0 : une creature du jeu, de genre `kind`).
+    MobSpawn { id: u32, kind: u8, skin: u8, pos: [f64; 3], yaw: f64, baby: bool },
     MobPos { id: u32, pos: [f64; 3], yaw: f64 },
     MobHurt { id: u32 },
     MobRemove { id: u32 },
@@ -168,7 +174,15 @@ pub enum ServerMsg {
     /// Offres du villageois dont la fenetre vient de s'ouvrir : (prix, marchandise).
     Trades { title: String, offers: Vec<(crate::items::Stack, crate::items::Stack)> },
     /// Son joue a cet endroit ; `kind` est l'une des constantes du module `sound`.
-    Sound { pos: [i32; 3], kind: u8, pitch: u8 },
+    Sound { pos: [i32; 3], kind: u8, pitch: u8 },    /// Mods de la partie, annonces avant l'entree du joueur : il telecharge ceux qu'il n'a pas,
+    /// puis repond `ModsReady`. `content` : ce que les mods ajoutent au jeu ; `tiles` : leurs textures.
+    Mods { mods: Vec<crate::mods::Info>, content: crate::mods::Content, tiles: Vec<crate::mods::TileDef> },
+    /// Un morceau de l'archive d'un mod ; `total` est la taille de l'archive entiere.
+    ModPart { hash: crate::mods::Hash, offset: u32, total: u32, data: Vec<u8> },
+    /// Message du script serveur d'un mod a son script client.
+    ModMsg { mod_id: String, name: String, data: String },    /// Bruitage demande par un mod : un son du jeu, ou « mod:fichier ». `pos` : l'endroit d'ou il vient,
+    /// ou None s'il s'entend partout.
+    Play { name: String, pos: Option<[f64; 3]>, volume: f32 },
 }
 
 pub fn write_msg<W: Write, T: Serialize>(w: &mut W, msg: &T) -> io::Result<()> {

@@ -7,6 +7,7 @@ Le projet est un espace de travail Cargo de trois paquets, environ 27 000 lignes
 | `shared` | tout ce que client et serveur doivent comprendre de la même façon : blocs, objets, recettes, génération du monde, règles des circuits, physique, protocole, commandes, voix |
 | `server` | la simulation : il fait autorité sur le monde, les inventaires, les créatures et la survie |
 | `client` | la fenêtre, le rendu, le son, l'interface ; il embarque aussi le serveur pour le solo |
+| `modkit` | le kit `epicube-mod`, avec lequel s'écrivent les mods en Rust |
 
 ## shared
 
@@ -24,6 +25,7 @@ Le projet est un espace de travail Cargo de trois paquets, environ 27 000 lignes
 | `rules` | modes de jeu et difficultés |
 | `commands` | table des commandes, analyse et complétion |
 | `voice` | format de la voix : compression, rééchantillonnage, portée |
+| `mods`, `script` | paquet d'un mod, blocs ajoutés par les mods, bac à sable Lua et WebAssembly |
 | `trade`, `mobs`, `seed`, `util` | commerce, créatures, graines, bruit et hasard |
 
 ## Le serveur
