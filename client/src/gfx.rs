@@ -456,7 +456,7 @@ impl Gfx {
             entries: &[
                 uniform_entry(0),
                 texture_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(2, wgpu::TextureSampleType::Depth),
+                texture_entry(2, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         });
 

@@ -7,7 +7,8 @@ struct P {
 
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var scene: texture_2d<f32>;
-@group(0) @binding(2) var depth: texture_depth_2d;
+// Lue comme une texture ordinaire : OpenGL ne sait pas lire un pixel precis d'une texture de profondeur.
+@group(0) @binding(2) var depth: texture_2d<f32>;
 
 @vertex
 fn vs_post(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -24,7 +25,7 @@ fn clampc(c: vec2<i32>) -> vec2<i32> {
 
 // Distance a la camera, en blocs.
 fn lin(c: vec2<i32>) -> f32 {
-    let d = textureLoad(depth, clampc(c), 0);
+    let d = textureLoad(depth, clampc(c), 0).r;
     return p.a.x * p.a.y / (p.a.y - d * (p.a.y - p.a.x));
 }
 
@@ -44,7 +45,7 @@ fn fs_blit(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
 fn fs_post(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
     let c = vec2<i32>(fc.xy);
     var col = textureLoad(scene, c, 0).rgb;
-    let d0 = textureLoad(depth, c, 0);
+    let d0 = textureLoad(depth, c, 0).r;
     if (p.b.z > 0.0 && d0 < 0.99999) {
         let t = i32(p.b.w);
         let dx = vec2<i32>(t, 0);
