@@ -278,17 +278,18 @@ impl Gfx {
         let size = window.inner_size();
         let (w, h) = (size.width.max(1), size.height.max(1));
 
-        // Vulkan d'abord (MoltenVK sur macOS). EPICUBE_BACKEND=auto force le backend natif.
+        // Vulkan d'abord (MoltenVK sur macOS), puis le moteur natif du systeme, puis OpenGL : les cartes
+        // d'avant 2013 n'ont ni Vulkan ni DirectX 12, mais font tourner OpenGL. Le rendu logiciel de
+        // Windows ne sert qu'en dernier recours. EPICUBE_BACKEND=auto, dx12, metal ou gl impose un moteur.
         let asked = std::env::var("EPICUBE_BACKEND").unwrap_or_default();
-        let prefer_native = !asked.is_empty() && asked != "vulkan";
-        let tries: &[wgpu::Backends] = if asked == "metal" {
-            &[wgpu::Backends::METAL, wgpu::Backends::PRIMARY]
-        } else if prefer_native {
-            &[wgpu::Backends::PRIMARY]
-        } else {
-            &[wgpu::Backends::VULKAN, wgpu::Backends::PRIMARY]
+        let tries: &[wgpu::Backends] = match asked.as_str() {
+            "metal" => &[wgpu::Backends::METAL, wgpu::Backends::PRIMARY],
+            "gl" => &[wgpu::Backends::GL],
+            "dx12" => &[wgpu::Backends::DX12],
+            "" | "vulkan" => &[wgpu::Backends::VULKAN, wgpu::Backends::PRIMARY, wgpu::Backends::GL],
+            _ => &[wgpu::Backends::PRIMARY, wgpu::Backends::GL],
         };
-        let mut found = None;
+        let (mut found, mut fallback) = (None, None);
         for &backends in tries {
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends, ..Default::default() });
             let Ok(surface) = instance.create_surface(window.clone()) else { continue };
@@ -297,11 +298,16 @@ impl Gfx {
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             }));
-            if let Some(adapter) = adapter {
-                found = Some((surface, adapter));
-                break;
+            let Some(adapter) = adapter else { continue };
+            // Un rendu calcule par le processeur : on le garde de cote, une vraie carte peut suivre.
+            if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+                fallback.get_or_insert((surface, adapter));
+                continue;
             }
+            found = Some((surface, adapter));
+            break;
         }
+        let found = found.or(fallback);
         let (surface, adapter) = found.expect("aucune carte graphique compatible trouvee");
         let info = adapter.get_info();
         let backend = format!("{:?} - {}", info.backend, info.name);
@@ -323,7 +329,12 @@ impl Gfx {
             &wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                // OpenGL n'offre pas toutes les limites habituelles : on prend ce que la carte sait faire.
+                required_limits: if info.backend == wgpu::Backend::Gl {
+                    wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
+                } else {
+                    wgpu::Limits::default()
+                },
                 // En rendu logiciel la memoire est celle de l'ordinateur : on la reserve par petits blocs.
                 memory_hints: if software { wgpu::MemoryHints::MemoryUsage } else { wgpu::MemoryHints::Performance },
             },

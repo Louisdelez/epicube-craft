@@ -1,0 +1,26 @@
+# Diagnostic temporaire : le jeu en solo avec le moteur OpenGL, sur un Linux sans carte graphique.
+name: Diagnostic OpenGL
+on:
+  push:
+    branches: [icone]
+jobs:
+  gl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev xvfb libgl1-mesa-dri libegl1 libgles2 mesa-utils
+      - run: cargo build -p client
+      - name: Solo, OpenGL impose puis choix automatique
+        run: |
+          for mode in gl auto-defaut; do
+            export EPICUBE_BENCH=20 RUST_BACKTRACE=1
+            if [ "$mode" = gl ]; then export EPICUBE_BACKEND=gl; else unset EPICUBE_BACKEND; fi
+            rm -f plantage.txt
+            xvfb-run -a -s "-screen 0 1280x720x24" timeout 120 ./target/debug/epicube-craft --solo --world "essai-$mode" > "out-$mode.txt" 2>&1
+            echo "=== [$mode] code de sortie : $?"
+            grep -v "^  \(reseau\|jeu\|maillage\|scene\|rendu\|gpu\|boucle\)" "out-$mode.txt" | grep -v "^Modele\|^Textures" | head -40
+            [ -f plantage.txt ] && { echo "--- plantage.txt"; head -30 plantage.txt; } || echo "--- pas de plantage.txt"
+          done
