@@ -227,6 +227,8 @@ struct Client {
     xp_dirty: bool,
     xp_seed: u64,
     held_sent: u16,
+    /// Son skin (une image PNG), tel qu'il l'a envoye : les autres le recoivent.
+    skin: Option<Vec<u8>>,
     /// Postures montrees aux autres : arc tendu, accroupi.
     aiming: bool,
     sneaking: bool,
@@ -603,6 +605,7 @@ impl Client {
                         xp_dirty: false,
                         xp_seed: 0,
                         held_sent: 0,
+                        skin: None,
                         aiming: false,
                         sneaking: false,
                         cursor: None,
@@ -1230,6 +1233,15 @@ impl Server {
                     }
                 }
             }
+            ClientMsg::Skin { data } => {
+                // Une image PNG de taille raisonnable : le serveur la transmet sans la lire.
+                if data.len() <= shared::proto::MAX_SKIN && data.starts_with(b"\x89PNG") {
+                    if let Some(c) = self.clients.get_mut(&id) {
+                        c.skin = Some(data.clone());
+                    }
+                    self.broadcast_all(ServerMsg::PlayerSkin { id, data }, Some(id));
+                }
+            }
             ClientMsg::Enchant { index } => self.enchant(id, index as usize),
             ClientMsg::Forge => self.forge(id),
             ClientMsg::Sneak(on) => {
@@ -1382,7 +1394,12 @@ impl Server {
             .clients
             .iter()
             .filter(|(oid, c)| **oid != id && c.ready)
-            .flat_map(|(oid, c)| [ServerMsg::PlayerJoin { id: *oid, name: c.name.clone(), account: c.account }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)), held: c.held().unwrap_or(0) }])
+            .flat_map(|(oid, c)| {
+                let mut msgs = vec![ServerMsg::PlayerJoin { id: *oid, name: c.name.clone(), account: c.account }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)), held: c.held().unwrap_or(0) }];
+                // Leur skin, s'ils en ont envoye un.
+                msgs.extend(c.skin.clone().map(|data| ServerMsg::PlayerSkin { id: *oid, data }));
+                msgs
+            })
             .collect();
         let drops: Vec<ServerMsg> = self
             .drops

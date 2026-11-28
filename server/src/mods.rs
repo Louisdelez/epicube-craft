@@ -426,6 +426,30 @@ fn api(mod_id: &str, reg: &Rc<RefCell<Reg>>) -> Api {
                 Ok(vec![Val::Bool(true)])
             }),
             op::HELD => srv(|s| Ok(s.clients.get(&pid(a)?).and_then(|c| c.held()).map(|i| Val::Str(item_word(i))).into_iter().collect())),
+            op::TAKE_HELD => srv(|s| {
+                let Some(c) = s.clients.get_mut(&pid(a)?).filter(|c| c.ready && !c.dead) else { return Ok(Vec::new()) };
+                let Some(st) = c.inv[c.sel].take() else { return Ok(Vec::new()) };
+                c.inv_dirty = true;
+                // Le jeton : objet, nombre, usure, enchantements. Le nom de l'objet y est en clair, pour qu'il
+                // reste juste si les numeros des objets de mods changent d'une partie a l'autre.
+                Ok(vec![Val::Str(item_word(st.id)), Val::Num(st.n as f64), Val::Str(format!("{}*{}*{}*{}", item_word(st.id), st.n, st.dur, st.ench.0))])
+            }),
+            op::GIVE_STACK => srv(|s| {
+                let token = text(a, 1)?;
+                let parts: Vec<&str> = token.split('*').collect();
+                let stack = match parts.as_slice() {
+                    [word, n, dur, ench] => item_from(word).and_then(|id| Some(Stack { id, n: n.parse::<u8>().ok()?.clamp(1, items::max_stack(id)), dur: dur.parse::<u16>().ok()?.min(items::max_dur(id)), ench: shared::ench::Ench(ench.parse().ok()?) })),
+                    _ => None,
+                };
+                let who = pid(a)?;
+                match stack {
+                    Some(st) if s.clients.get(&who).is_some_and(|c| c.ready) => {
+                        s.give(who, st);
+                        Ok(vec![Val::Bool(true)])
+                    }
+                    _ => Ok(vec![Val::Bool(false)]),
+                }
+            }),
             op::SET_MODE => srv(|s| {
                 let word = text(a, 1)?;
                 let mode = cmd::index_of(&cmd::MODES, word).ok_or_else(|| format!("mode inconnu : {word}"))?;
@@ -781,7 +805,7 @@ fn prelude() -> String {
         ("SET_HUNGER", op::SET_HUNGER), ("SPAWN", op::SPAWN), ("DROP", op::DROP), ("EXPLODE", op::EXPLODE), ("DIMENSION", op::DIMENSION),
         ("MOB", op::MOB), ("SOUND", op::SOUND),
         ("RULE", op::RULE), ("DAMAGE", op::DAMAGE), ("SET_HOME", op::SET_HOME), ("CLEAR", op::CLEAR), ("TOP", op::TOP), ("FILL", op::FILL), ("INFO", op::INFO),
-        ("CHEST", op::CHEST), ("ENCHANT", op::ENCHANT),
+        ("CHEST", op::CHEST), ("ENCHANT", op::ENCHANT), ("TAKE_HELD", op::TAKE_HELD), ("GIVE_STACK", op::GIVE_STACK),
     ];
     let table: Vec<String> = ops.iter().map(|(n, v)| format!("{n}={v}")).collect();
     format!("local OP = {{{}}}\n{PRELUDE}", table.join(","))
@@ -845,6 +869,9 @@ function Player:set_home(x, y, z) call(OP.SET_HOME, self.id, x, y, z) end
 function Player:clear() call(OP.CLEAR, self.id) end
 function Player:info(text) call(OP.INFO, self.id, tostring(text)) end
 function Player:enchant(name, level) return call(OP.ENCHANT, self.id, name, level or 1) end
+-- Prend la pile tenue : rend son nom, son nombre et un jeton a rendre a give_stack (usure et enchantements gardes).
+function Player:take_held() return call(OP.TAKE_HELD, self.id) end
+function Player:give_stack(token) return call(OP.GIVE_STACK, self.id, tostring(token)) end
 
 function players()
   local flat, out = { call(OP.PLAYERS) }, {}
@@ -1923,7 +1950,7 @@ mod tests {
         let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().join("mod.json").exists()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
         names.sort();
         // Faction n'est pas une partie qui se lance : c'est un monde garde, qui a son propre essai.
-        names.retain(|n| n != "faction");
+        names.retain(|n| n != "faction" && n != "smp");
         assert!(names.len() >= 15, "{names:?}");
         for name in names {
             let before = SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed);
@@ -2057,6 +2084,100 @@ mod tests {
             srv.mod_event("tick", None, &[]);
         }
         assert!(rx.try_iter().any(|m| matches!(m, ServerMsg::ModMsg { name, data, .. } if name == "etat" && data.contains("Dojo"))));
+        assert_eq!(SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed) - before, 0, "erreurs de script");
+        sm::clear_content();
+    }
+
+    #[test]
+    fn a_world_of_smp() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let before = SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed);
+        let pack = mode("smp");
+        assert!(pack.manifest.mode.as_ref().is_some_and(|m| m.keep_world));
+        let (mut srv, rx) = server(vec![pack]);
+        let rx2 = second(&mut srv, "Ren");
+        srv.rules.difficulty = shared::rules::NORMAL;
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        let said = |rx: &Receiver<ServerMsg>| -> Vec<String> { rx.try_iter().filter_map(|m| if let ServerMsg::Chat { text, .. } = m { Some(text) } else { None }).collect() };
+        let at = |p: [i32; 3], word: &str| [Arg::N(p[0] as f64), Arg::N(p[1] as f64), Arg::N(p[2] as f64), Arg::S(word.into())];
+        let second_of = |srv: &mut Server, n: usize| {
+            for _ in 0..(20 * n) {
+                srv.mod_event("tick", None, &[]);
+            }
+        };
+        // Un nouveau venu recoit de quoi commencer ; le point de depart est protege.
+        assert!(items::count(&srv.clients[&1].inv, items::tool_id(items::PICK, 1)) == 1);
+        assert!(!srv.mod_event("break", Some(1), &at([8, 199, 8], "pierre")));
+        assert!(!srv.mod_event("hit", Some(1), &[Arg::S("Ren".into())]), "pas de combat au point de depart");
+        assert!(srv.mod_event("break", Some(1), &at([300, 80, 300], "pierre")));
+        // Une maison : on la fixe, on s'eloigne, /home y ramene apres quelques secondes sans bouger.
+        srv.clients.get_mut(&1).unwrap().pos = [120.5, 90.0, 120.5];
+        srv.chat(1, "/sethome base".into());
+        srv.clients.get_mut(&1).unwrap().pos = [400.5, 90.0, 400.5];
+        srv.chat(1, "/home base".into());
+        second_of(&mut srv, 5);
+        assert_eq!(srv.clients[&1].pos[0], 120.5);
+        // Bouger annule le depart.
+        srv.chat(1, "/spawn".into());
+        srv.clients.get_mut(&1).unwrap().pos[0] += 3.0;
+        second_of(&mut srv, 5);
+        assert_eq!(srv.clients[&1].pos[0], 123.5);
+        // Ren demande a rejoindre Aki, qui accepte.
+        srv.chat(2, "/tpa Aki".into());
+        srv.chat(1, "/tpaccept".into());
+        second_of(&mut srv, 5);
+        assert_eq!(srv.clients[&2].pos[0], 123.5);
+        // Loin du depart on peut se battre, sauf si l'un des deux y a renonce.
+        assert!(srv.mod_event("hit", Some(1), &[Arg::S("Ren".into())]));
+        srv.chat(2, "/pvp non".into());
+        assert!(!srv.mod_event("hit", Some(1), &[Arg::S("Ren".into())]));
+        assert!(!srv.mod_event("hit", Some(2), &[Arg::S("Aki".into())]));
+        // L'argent : cent kobans a l'arrivee, que l'on se donne ; la banque change les pieces.
+        srv.chat(1, "/payer Ren 30".into());
+        srv.clients.get_mut(&1).unwrap().inv[20] = Some(Stack::new(items::KOBAN, 12));
+        srv.chat(1, "/banque deposer 12".into());
+        srv.chat(1, "/argent".into());
+        assert!(said(&rx).iter().any(|t| t.contains("Vous avez 82 kobans")));
+        // L'hotel des ventes : Aki vend sa pioche enchantee et usee ; Ren l'achete telle quelle.
+        let pick = Stack { dur: 77, ench: shared::ench::Ench::NONE.with(shared::ench::EFFICIENCY, 3), ..Stack::new(items::tool_id(items::PICK, 2), 1) };
+        {
+            let c = srv.clients.get_mut(&1).unwrap();
+            (c.inv, c.sel, c.inv_dirty) = ([None; 36], 0, true);
+            c.inv[0] = Some(pick);
+        }
+        srv.chat(1, "/ah vendre 50".into());
+        assert!(srv.clients[&1].inv[0].is_none(), "la pile en vente quitte l'inventaire");
+        srv.chat(2, "/ah".into());
+        let listing = rx2.try_iter().filter_map(|m| if let ServerMsg::ModMsg { name, data, .. } = m { (name == "ah").then_some(data) } else { None }).last().expect("la fenetre de l'hotel des ventes");
+        assert!(listing.contains("pioche_en_fer|1|50|Aki|0"), "{listing}");
+        srv.clients.get_mut(&2).unwrap().inv = [None; 36];
+        srv.on_msg(2, ClientMsg::ModMsg { mod_id: "smp".into(), name: "ah_acheter".into(), data: "1/1".into() });
+        assert!(srv.clients[&2].inv.iter().flatten().any(|st| *st == pick), "l'objet arrive avec son usure et ses enchantements");
+        srv.chat(1, "/argent".into());
+        srv.chat(2, "/argent".into());
+        assert!(said(&rx).iter().any(|t| t.contains("Vous avez 132 kobans")));
+        assert!(said(&rx2).iter().any(|t| t.contains("Vous avez 80 kobans")));
+        // On ne peut pas acheter sans argent ; retirer sa propre vente rend l'objet.
+        srv.clients.get_mut(&1).unwrap().inv[0] = Some(Stack::new(items::DIAMOND, 5));
+        srv.chat(1, "/ah vendre 5000".into());
+        srv.chat(2, "/ah acheter 2".into());
+        assert!(said(&rx2).iter().any(|t| t.contains("Il vous manque")));
+        srv.chat(1, "/ah acheter 2".into());
+        assert_eq!(items::count(&srv.clients[&1].inv, items::DIAMOND), 5);
+        // La nuit : la moitie des joueurs suffit a la passer.
+        srv.chat(1, "/heure nuit".into());
+        srv.chat(1, "/dormir".into());
+        assert!((srv.time * 24.0 + 6.0).rem_euclid(24.0) < 12.0, "le jour est revenu");
+        // Mort : /back ramene sur les lieux.
+        srv.clients.get_mut(&1).unwrap().pos = [500.5, 90.0, 500.5];
+        srv.kill(1);
+        srv.on_msg(1, ClientMsg::Respawn);
+        srv.chat(1, "/back".into());
+        second_of(&mut srv, 5);
+        assert_eq!(srv.clients[&1].pos[0], 500.5);
+        srv.chat(1, "/regles".into());
+        srv.chat(1, "/homes".into());
         assert_eq!(SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed) - before, 0, "erreurs de script");
         sm::clear_content();
     }

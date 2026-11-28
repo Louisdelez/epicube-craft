@@ -555,6 +555,24 @@ mod tests {
     }
 
     #[test]
+    fn skins_reach_the_other_players() {
+        let (mut srv, c) = lab();
+        let rx1 = player(&mut srv, c, Stack::new(items::STICK, 1));
+        let rx2 = rival(&mut srv, c, 2, 0.0, 2.0, None);
+        let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[7u8; 200]].concat();
+        srv.on_msg(1, ClientMsg::Skin { data: png.clone() });
+        // L'autre joueur le recoit ; celui qui l'envoie, non.
+        assert!(rx2.try_iter().any(|m| matches!(m, ServerMsg::PlayerSkin { id: 1, data } if data == png)));
+        assert!(!rx1.try_iter().any(|m| matches!(m, ServerMsg::PlayerSkin { .. })));
+        assert_eq!(srv.clients[&1].skin.as_deref(), Some(png.as_slice()));
+        // Ce qui n'est pas une image, ou qui est trop gros, est ignore.
+        srv.on_msg(2, ClientMsg::Skin { data: b"pas une image".to_vec() });
+        srv.on_msg(2, ClientMsg::Skin { data: [b"\x89PNG".as_slice(), &vec![0u8; shared::proto::MAX_SKIN]].concat() });
+        assert!(srv.clients[&2].skin.is_none());
+        assert!(!rx1.try_iter().any(|m| matches!(m, ServerMsg::PlayerSkin { .. })));
+    }
+
+    #[test]
     fn mining_wear_and_repair() {
         let (mut srv, c) = lab();
         let katana = items::tool_id(items::SWORD, 2);

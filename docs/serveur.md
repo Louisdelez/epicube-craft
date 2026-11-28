@@ -8,17 +8,18 @@ Le jeu fonctionne toujours avec un serveur, qui fait autorité sur le monde, les
 
 - **À gauche**, les modes de jeu (Survie, Créatif, UHC, Bed Wars, et ceux qu'apportent les mods), avec leur nombre de parties en ligne et une recherche.
 - **À droite**, les parties du mode choisi, qu'elles tournent dans un centre de données, sur un NAS ou dans le jeu d'un joueur, avec une recherche par nom, étiquette ou pseudo de l'hôte. Chaque partie montre son ping : quatre barres vertes et le temps de réponse en millisecondes. **Rejoindre** y entre.
-- **Le « + »**, en haut à droite, crée sa propre partie de ce mode : elle tourne dans le jeu de celui qui la crée, et s'arrête quand il la quitte.
+- **Le « + »**, en haut à droite, crée aussitôt sa propre partie de ce mode : elle tourne dans le jeu de celui qui la crée, et s'arrête quand il la quitte.
 
 Il n'y a rien à régler : ni port à ouvrir, ni box à toucher. Une partie que l'on ne peut pas joindre directement (derrière une box, c'est presque toujours le cas) passe d'elle-même par le relais d'Epicube Hub.
 
-### Publique, privée ou solo
+### Publique ou privée
 
-En créant une partie, on choisit qui peut y venir :
+À côté du « + », un interrupteur dit qui pourra venir dans la partie que l'on crée :
 
 - **Publique** : elle figure dans la liste, tout le monde peut la rejoindre.
 - **Privée** : elle figure dans la liste avec un cadenas ; seuls les **amis** de celui qui l'héberge peuvent y entrer.
-- **Solo** : personne d'autre ne la voit.
+
+Le « + » crée aussitôt la partie du mode choisi, sans rien demander d'autre. Les modes qui gardent leur monde ont chacun le leur : `monde` pour la survie, `creatif` pour le créatif, `faction` pour le PvP Faction.
 
 ### Amis
 
@@ -30,6 +31,7 @@ Les amis sont ceux du compte Epicube : la même liste que dans Epicube Hub. Leur
 |---|---|
 | Survie | récolter, fabriquer, bâtir, se défendre ; le monde est gardé d'une partie à l'autre |
 | Créatif | tous les objets, vol libre ; le monde est gardé |
+| SMP | la survie à plusieurs : maisons, téléportation entre joueurs, argent, hôtel des ventes ; le monde est gardé |
 | PvP Faction | factions, terres revendiquées, puissance, pillages ; le monde est gardé |
 | UHC | la vie ne remonte pas toute seule, la zone rétrécit, le dernier en vie gagne |
 | Bed Wars | des îles dans le ciel, un lit par équipe, une boutique ; la dernière équipe gagne |
@@ -45,6 +47,28 @@ Ces quatre modes commencent dès que deux joueurs sont là (ou tout de suite ave
 **Sky Wars.** Huit îles autour d'une île centrale. On attend huit secondes dans une cage au-dessus de la sienne ; les cages s'ouvrent, on vide ses deux coffres, on bâtit un pont. Le centre a quatre coffres mieux garnis. Tomber dans le vide tue, il n'y a pas de seconde vie. Les coffres se regarnissent après trois minutes ; à huit minutes vient la mort subite.
 
 **Hunger Games.** Douze socles en cercle autour de la corne d'abondance et de ses huit coffres ; vingt-quatre autres coffres sont dispersés dans une arène de 180 blocs de côté. Dix secondes immobile sur son socle, puis le signal, et quinze secondes pour courir avant que le combat s'ouvre. On ne casse ni ne pose rien. Les coffres se regarnissent après cinq minutes ; à dix minutes, ou quand il ne reste que trois tributs, vient le match à mort : tout le monde est ramené à la corne, dans une zone de 36 blocs.
+
+### SMP
+
+La survie à plusieurs, dans un monde **gardé d'une partie à l'autre**. Le jeu reste celui de la survie ; le mode y ajoute ce qu'on trouve sur les serveurs SMP (`/regles` le rappelle en jeu).
+
+| Commande | Rôle |
+|---|---|
+| `/spawn` | retourne au point de départ du monde |
+| `/sethome [nom]`, `/home [nom]`, `/homes`, `/delhome <nom>` | jusqu'à trois maisons où revenir |
+| `/tpa <joueur>`, `/tpaccept`, `/tpdeny` | demande à rejoindre un joueur ; elle tient une minute |
+| `/back` | retourne là où l'on est mort |
+| `/pvp oui`, `/pvp non` | accepte ou refuse le combat entre joueurs |
+| `/dormir` | vote pour passer la nuit ; la moitié des joueurs suffit |
+| `/argent`, `/payer <joueur> <somme>` | son compte en kobans (cent offerts à l'arrivée) |
+| `/banque deposer <n>`, `/banque retirer <n>` | change les pièces (l'objet koban) en argent de compte, et l'inverse |
+| `/ah` | ouvre l'hôtel des ventes |
+| `/ah vendre <prix>` | met en vente la pile que l'on tient |
+
+- **Téléportations.** On ne part qu'après quatre secondes sans bouger.
+- **Point de départ.** Seize blocs autour : on n'y casse rien, on n'y pose rien, on ne s'y bat pas.
+- **Hôtel des ventes.** Six ventes en cours par joueur. Un clic achète ; un clic sur sa propre vente la retire. L'objet garde son usure et ses enchantements ; le vendeur est payé même s'il n'est pas là.
+- **Arrivée.** La première fois, on reçoit une pioche, une hache et de quoi manger.
 
 ### PvP Faction
 

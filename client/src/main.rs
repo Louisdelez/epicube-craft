@@ -31,6 +31,8 @@ mod net;
 mod pixels;
 mod prof;
 mod settings;
+mod skin;
+mod skinlib;
 mod ui;
 
 use gfx::{Gfx, Post, Uniforms, Vtx};
@@ -201,6 +203,10 @@ struct Remote {
     talk: f32,
     /// Temps restant du flash rouge apres un coup.
     hurt: f32,
+    /// Case de l'atlas ou se trouve son skin.
+    slot: usize,
+    /// Orientation de son buste : elle suit son regard avec un temps de retard.
+    body_yaw: f32,
     /// Objet tenu (0 = rien), et gestes en cours : coup de bras, bouclier leve, arc tendu, accroupi.
     held: u16,
     swing: f32,
@@ -362,8 +368,11 @@ struct Stance {
     swing: f32,
     /// Accroupi, de 0 a 1 : le buste se penche.
     bend: f32,
-    /// Inclinaison du regard : la tete la suit.
+    /// Inclinaison du regard : la tete la suit. `head_yaw` : de combien elle est tournee par rapport au buste.
     pitch: f32,
+    head_yaw: f32,
+    /// Phase de la respiration : les bras au repos s'ecartent a peine, en rythme.
+    breath: f32,
     /// Bras qui ne balancent pas : ils portent un geste (frapper, parer, viser).
     arm_r: Option<Quat>,
     arm_l: Option<Quat>,
@@ -374,7 +383,7 @@ impl Stance {
     fn upper(&self, c: Vec3, q: Quat, head: bool) -> (Vec3, Quat) {
         let (mut c, mut q) = (c, q);
         if head {
-            let (neck, look) = (Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_x(-self.pitch.clamp(-1.1, 1.1) - 0.3 * self.bend));
+            let (neck, look) = (Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_y(self.head_yaw) * Quat::from_rotation_x(-self.pitch.clamp(-1.1, 1.1) - 0.3 * self.bend));
             (c, q) = (neck + look * (c - neck), look * q);
         }
         if self.bend > 0.001 && c.y > 0.8 {
@@ -386,8 +395,11 @@ impl Stance {
 
     /// Rotation d'un membre : `leg` est son sens de balancement, `pivot` son attache.
     fn limb(&self, leg: i8, pivot: Vec3) -> Quat {
-        let over = if pivot.y > 1.2 { if pivot.x < 0.0 { self.arm_r } else { self.arm_l } } else { None };
-        over.unwrap_or(Quat::from_rotation_x(self.swing * leg as f32))
+        let arm = pivot.y > 1.2;
+        let over = if arm { if pivot.x < 0.0 { self.arm_r } else { self.arm_l } } else { None };
+        // Un bras au repos pend un peu ecarte du corps, et respire.
+        let sway = if arm { pivot.x.signum() * (0.05 + 0.03 * (self.breath * 1.8).sin()) } else { 0.0 };
+        over.unwrap_or(Quat::from_rotation_z(sway) * Quat::from_rotation_x(self.swing * leg as f32))
     }
 
     /// La main droite, dans le repere du modele : sa place et l'orientation du bras.
@@ -395,6 +407,91 @@ impl Stance {
         let shoulder = Vec3::new(-0.36, 1.44, 0.0);
         let q = self.limb(1, shoulder);
         self.upper(shoulder + q * Vec3::new(0.0, -0.68, 0.03), q, false)
+    }
+}
+
+/// Un joueur tel qu'on le voit de l'exterieur : ou il est, comment il se tient, ce qu'il fait.
+struct Person {
+    feet: Vec3,
+    /// Direction du regard, et orientation du buste (elle suit le regard avec retard).
+    yaw: f32,
+    body_yaw: f32,
+    pitch: f32,
+    /// Pas de marche (phase), vitesse au sol, et de 0 a 1 : en l'air, accroupi, avancement du coup de bras.
+    walk: f32,
+    speed: f32,
+    air: f32,
+    sneak: f32,
+    hit: f32,
+    guard: bool,
+    aim: bool,
+    held: u16,
+    gear: [u16; 4],
+    hurt: bool,
+    breath: f32,
+}
+
+/// Ramene un angle entre -pi et pi.
+fn wrap(a: f32) -> f32 {
+    let pi = std::f32::consts::PI;
+    (a + pi).rem_euclid(2.0 * pi) - pi
+}
+
+/// Le buste suit le regard : aussitot quand on marche, et seulement passe 50 degres d'ecart quand on est a l'arret.
+fn turn_body(body_yaw: &mut f32, yaw: f32, speed: f32, dt: f32) {
+    let diff = wrap(yaw - *body_yaw);
+    if speed > 0.4 {
+        *body_yaw += diff * (dt * 10.0).min(1.0);
+    } else if diff.abs() > 0.87 {
+        *body_yaw += diff - 0.87 * diff.signum();
+    }
+}
+
+/// Dessine un joueur entier : son corps dans sa posture, son armure, l'objet qu'il tient.
+fn push_person(out: &mut Vec<Vtx>, model: &Model, shapes: &items3d::Shapes, p: &Person, light: [u8; 4]) {
+    let pi = std::f32::consts::PI;
+    // Les membres balancent selon l'allure, s'ecartent en l'air ; le bras droit porte les gestes.
+    let stride = p.walk.sin() * 0.6 * (p.speed / 4.3).clamp(0.0, 1.35);
+    let head_yaw = wrap(p.yaw - p.body_yaw).clamp(-1.3, 1.3);
+    // Viser et parer se font dans l'axe du regard.
+    let facing = Quat::from_rotation_y(head_yaw);
+    let level = -(1.5 + p.pitch.clamp(-1.2, 1.2));
+    let arm_r = if p.aim {
+        Some(facing * Quat::from_rotation_x(level))
+    } else if p.guard {
+        Some(facing * Quat::from_rotation_y(-0.5) * Quat::from_rotation_x(-1.15))
+    } else if p.hit > 0.0 {
+        Some(Quat::from_rotation_z(0.2 * p.hit) * Quat::from_rotation_x(-(0.3 + 1.5 * p.hit)))
+    } else {
+        None
+    };
+    let arm_l = p.aim.then(|| facing * Quat::from_rotation_y(-0.45) * Quat::from_rotation_x(level));
+    let st = Stance { swing: stride + (0.5 - stride) * p.air, bend: p.sneak, pitch: p.pitch, head_yaw, breath: p.breath, arm_r, arm_l };
+    let feet = p.feet - Vec3::Y * 0.12 * p.sneak;
+    push_player(out, model, feet, p.body_yaw, &st, if p.hurt { [255, 110, 110, 255] } else { [255; 4] }, light);
+    push_gear(out, feet, p.body_yaw, &st, p.gear, light);
+    // L'objet tenu, dans la main droite : un outil se tient par le manche, pointe en avant.
+    if let Some(parts) = shapes.get(&p.held).filter(|_| p.held != 0) {
+        let (hand, q) = st.hand();
+        let tool = p.held >= 256 && matches!(itemdefs::pose(p.held), items3d::Pose::Tool);
+        // Le modele d'un outil est dresse, manche en bas : on le couche vers l'avant, tenu par le manche.
+        let (grip, size, center) = if p.held == items::SHIELD {
+            // Le bouclier : dresse devant soi quand on pare, pendu au bras sinon.
+            let grip = if p.guard { facing } else { q * Quat::from_rotation_y(pi / 2.0) };
+            (grip, 0.7, hand + if p.guard { facing * Vec3::new(0.12, 0.05, 0.14) } else { Vec3::new(-0.08, 0.1, 0.0) })
+        } else if p.held == items::YUMI {
+            // L'arc : dresse dans l'axe du tir quand on vise.
+            let grip = if p.aim { facing * Quat::from_rotation_x(-p.pitch.clamp(-1.2, 1.2)) * Quat::from_rotation_y(pi / 2.0) } else { q * Quat::from_rotation_y(pi / 2.0) };
+            (grip, 0.75, hand + if p.aim { facing * Vec3::new(0.0, 0.0, 0.1) } else { Vec3::ZERO })
+        } else if tool {
+            let grip = q * Quat::from_rotation_x(1.25) * Quat::from_rotation_y(pi / 2.0);
+            (grip, 0.6, hand + grip * Vec3::Y * 0.6 * 0.42)
+        } else {
+            (q, 0.26, hand + q * Vec3::new(0.0, -0.06, 0.1))
+        };
+        let basis = yaw_basis(p.body_yaw);
+        let world = |v: Vec3| basis[0] * v.x + basis[1] * v.y + basis[2] * v.z;
+        push_item(out, parts, feet + world(center), [world(grip * Vec3::X), world(grip * Vec3::Y), world(grip * Vec3::Z)], size, light);
     }
 }
 
@@ -598,6 +695,19 @@ pub struct App {
     pub rules: shared::rules::Rules,
     /// Secondes depuis le dernier appui sur Espace (deux appuis rapproches : on s'envole, en creatif).
     space_t: f32,
+    /// Temps depuis le dernier appui sur « avancer », course lancee par deux appuis, delai avant de ressauter.
+    tap_t: f32,
+    sprint_latch: bool,
+    jump_cd: f32,
+    /// Vitesse qu'aura le corps a la fin de l'image en cours (il se deplace a sa vitesse moyenne).
+    vel_end: Vec3,
+    leap: Option<Vec3>,
+    leap_top: f32,
+    /// Vue : 0 a la premiere personne, 1 de dos, 2 de face.
+    cam: u8,
+    /// Orientation du buste, qui suit le regard avec un temps de retard, et pas de marche, pour se voir soi-meme.
+    body_yaw: f32,
+    walk: f32,
     /// Premiere rangee affichee de l'inventaire creatif.
     pub palette_row: usize,
     /// Messages du serveur recus mais pas encore traites.
@@ -663,6 +773,9 @@ pub struct App {
     swing_told: bool,
     /// On tend l'arc : annonce aux autres joueurs.
     aiming: bool,
+    /// Les modeles des joueurs, un par case de skin, et les skins a ecrire dans l'atlas : (case, pixels).
+    skin_models: Vec<Model>,
+    skin_out: Vec<(usize, Vec<u8>)>,
     /// Secondes pendant lesquelles le bouclier, abattu par une hache, ne se leve plus.
     shield_off: f32,
     /// Secondes de tension de l'arc.
@@ -763,6 +876,15 @@ impl App {
             mode: 0,
             rules: shared::rules::Rules::default(),
             space_t: 1.0,
+            tap_t: 1.0,
+            sprint_latch: false,
+            jump_cd: 0.0,
+            vel_end: Vec3::ZERO,
+            leap: None,
+            leap_top: 0.0,
+            cam: 0,
+            body_yaw: 0.0,
+            walk: 0.0,
             palette_row: 0,
             inbox: std::collections::VecDeque::new(),
             epoch: 0,
@@ -806,6 +928,8 @@ impl App {
             guard_k: 0.0,
             swing_told: false,
             aiming: false,
+            skin_models: (0..skin::SLOTS).map(skin::model).collect(),
+            skin_out: Vec::new(),
             shield_off: 0.0,
             draw_t: 0.0,
             blocking: false,
@@ -907,6 +1031,8 @@ impl App {
                     self.dim = dim;
                     self.time = time as f32;
                     self.joined = true;
+                    // Les autres joueurs recoivent notre skin.
+                    self.net.send(ClientMsg::Skin { data: skin::encode(&skin::load()) });
                 }
                 ServerMsg::Refused { reason } => self.lost = Some(format!("Connexion refusée : {reason}")),
                 ServerMsg::Challenge { nonce } => {
@@ -938,7 +1064,13 @@ impl App {
                 ServerMsg::BlockChange { pos, b, m } => self.block_change(self.loc_cell(pos), b, m),
                 ServerMsg::PlayerJoin { id, name, .. } => {
                     self.info = Some((format!("{name} est dans la partie"), 4.0));
-                    self.others.insert(id, Remote { name, target: Vec3::ZERO, shown: Vec3::ZERO, yaw: 0.0, walk: 0.0, gear: [0; 4], talk: 0.0, hurt: 0.0, held: 0, swing: 0.0, guard: false, aim: false, sneak: false, sneak_k: 0.0, air_k: 0.0, speed: 0.0, pitch: 0.0 });
+                    // Une case de skin libre pour lui ; a defaut, il porte le skin de depart.
+                    let taken: Vec<usize> = self.others.values().map(|r| r.slot).collect();
+                    let slot = (skin::FIRST_REMOTE..skin::FIRST_SHELF).find(|k| !taken.contains(k)).unwrap_or(skin::DEFAULT);
+                    if slot != skin::DEFAULT {
+                        self.skin_out.push((slot, skin::default_skin()));
+                    }
+                    self.others.insert(id, Remote { name, target: Vec3::ZERO, shown: Vec3::ZERO, yaw: 0.0, walk: 0.0, gear: [0; 4], talk: 0.0, hurt: 0.0, slot, body_yaw: 0.0, held: 0, swing: 0.0, guard: false, aim: false, sneak: false, sneak_k: 0.0, air_k: 0.0, speed: 0.0, pitch: 0.0 });
                 }
                 ServerMsg::PlayerPos { id, pos, yaw, pitch } => {
                     let p = self.loc(pos);
@@ -1192,6 +1324,13 @@ impl App {
                     self.ping_ms = if self.ping_ms == 0.0 { ms } else { self.ping_ms + (ms - self.ping_ms) * 0.3 };
                     self.server_tps = tps as f32;
                     self.server_mspt = mspt as f32;
+                }
+                ServerMsg::PlayerSkin { id, data } => {
+                    if let Some(r) = self.others.get(&id).filter(|r| r.slot != skin::DEFAULT) {
+                        if let Ok(px) = skin::decode(&data) {
+                            self.skin_out.push((r.slot, px));
+                        }
+                    }
                 }
                 ServerMsg::Xp { level, progress } => {
                     (self.xp_level, self.xp_progress) = (level, progress);
@@ -1466,6 +1605,7 @@ impl App {
             match k {
                 k if *k == keys.key(Act::Info) => self.debug = !self.debug,
                 k if *k == keys.key(Act::Borders) => self.chunk_borders = !self.chunk_borders,
+                k if *k == keys.key(Act::Camera) => self.cam = (self.cam + 1) % 3,
                 k if *k == keys.key(Act::Mode) => self.cycle_mode(),
                 KeyCode::Escape => {
                     if self.mods.as_ref().is_some_and(|m| m.screen_open()) {
@@ -1727,7 +1867,19 @@ impl App {
             wish = fwd * inp.axis(k.key(Act::Forward), k.key(Act::Back)) + right * inp.axis(k.key(Act::Right), k.key(Act::Left));
             wish = wish.normalize_or_zero();
             jump = inp.down(k.key(Act::Jump));
-            sprint = inp.down(k.key(Act::Sprint)) && self.hunger > 6.0;
+            // Courir : la touche tenue, ou deux appuis rapproches sur « avancer » (la course dure tant qu'on avance).
+            let forward = k.key(Act::Forward);
+            self.tap_t += dt;
+            if inp.pressed.contains(&forward) {
+                if self.tap_t < 0.3 {
+                    self.sprint_latch = true;
+                }
+                self.tap_t = 0.0;
+            }
+            if !inp.down(forward) || self.hit_wall || self.hunger <= 6.0 {
+                self.sprint_latch = false;
+            }
+            sprint = (inp.down(k.key(Act::Sprint)) || self.sprint_latch) && self.hunger > 6.0 && inp.down(forward);
             down = inp.down(k.key(Act::Down));
         }
         if self.auto_walk > 0.0 {
@@ -1779,39 +1931,73 @@ impl App {
             let want = look * speed - Vec3::Y * sink;
             self.vel += (want - self.vel) * (3.0 * dt).min(1.0);
         } else {
-            let mut speed = if sprint { 5.8 } else { 4.3 };
+            // Le corps bouge comme dans Minecraft : a chaque tick (un vingtieme de seconde) la vitesse est
+            // multipliee par un frottement, puis recoit une poussee. On l'ecrit ici en continu, pour que le
+            // mouvement soit le meme quelle que soit la cadence d'affichage : la vitesse tend vers une
+            // vitesse limite, d'autant plus vite que le frottement est fort.
+            let ticks = dt * 20.0;
+            let mut speed = if sprint { 5.612 } else { 4.317 };
             // Le sable des ames retient les pas.
-            if self.world.block_at(self.pos - Vec3::Y * 0.1) == shared::blocks::SOUL_SAND {
+            let under = self.world.block_at(self.pos - Vec3::Y * 0.1);
+            if under == shared::blocks::SOUL_SAND {
                 speed *= 0.58;
             }
             // Arc tendu ou bouclier leve : on avance a petits pas.
             if self.blocking || self.draw_t > 0.0 {
                 speed *= 0.35;
             }
-            if in_water {
-                speed *= 0.55;
-            }
             if self.sneaking {
                 speed *= 0.3;
             }
-            let accel = if self.on_ground || in_water { 14.0 } else { 3.5 };
-            let k = (accel * dt).min(1.0);
-            self.vel.x += (wish.x * speed - self.vel.x) * k;
-            self.vel.z += (wish.z * speed - self.vel.z) * k;
+            // Frottement par tick, et vitesse limite : au sol on s'arrete net, en l'air on garde son elan,
+            // sur la glace on glisse, dans l'eau tout est freine.
+            let (friction, limit) = if in_water {
+                (0.8f32, speed * 0.51)
+            } else if self.on_ground {
+                (if under == shared::blocks::ICE { 0.8918 } else { 0.546 }, speed)
+            } else {
+                (0.91, speed * 1.03)
+            };
+            let keep = friction.powf(ticks);
+            // La vitesse en fin d'image, et la vitesse moyenne pendant l'image : c'est elle qui deplace le
+            // corps, pour que le chemin parcouru ne depende pas de la cadence d'affichage.
+            let ease = |v: f32, to: f32, keep: f32| -> (f32, f32) {
+                let rate = keep.ln();
+                (to + (v - to) * keep, if rate.abs() < 1e-6 { v } else { to + (v - to) * (keep - 1.0) / rate })
+            };
+            let (end_x, mid_x) = ease(self.vel.x, wish.x * limit, keep);
+            let (end_z, mid_z) = ease(self.vel.z, wish.z * limit, keep);
+            (self.vel.x, self.vel.z) = (mid_x, mid_z);
+            self.vel_end = Vec3::new(end_x, 0.0, end_z);
             if in_water {
-                self.vel.y = (self.vel.y - 8.0 * dt).max(-3.0);
-                if jump {
-                    self.vel.y = (self.vel.y + 30.0 * dt).min(4.0);
-                    // Contre une berge, un coup de rein permet de se hisser sur le bloc.
-                    if self.hit_wall {
-                        self.vel.y = 7.0;
-                    }
+                // On coule doucement ; « sauter » fait remonter.
+                let drift = if jump { 1.6 } else { -1.6 };
+                let (end_y, mid_y) = ease(self.vel.y, drift, keep);
+                (self.vel.y, self.vel_end.y) = (mid_y, end_y);
+                // Contre une berge, un coup de rein permet de se hisser sur le bloc.
+                if jump && self.hit_wall {
+                    (self.vel.y, self.vel_end.y) = (7.0, 7.0);
                 }
             } else {
-                self.vel.y = (self.vel.y - 28.0 * dt).max(-60.0);
-                if jump && self.on_ground {
-                    self.vel.y = 8.6;
+                // La gravite retire 0,08 bloc par tick a la vitesse, que l'air freine de 2 % : la chute tend
+                // vers 78 blocs par seconde.
+                // Le saut monte d'un bloc et quart, comme dans Minecraft. En courant, il porte plus loin.
+                // Espace tenu, on ressaute une demi-seconde apres le saut precedent.
+                self.jump_cd -= dt;
+                if !jump {
+                    self.jump_cd = 0.0;
                 }
+                if jump && self.on_ground && self.jump_cd <= 0.0 {
+                    self.vel.y = 9.2474;
+                    self.jump_cd = 0.5;
+                    if sprint {
+                        self.vel.x += fwd.x * 4.0;
+                        self.vel.z += fwd.z * 4.0;
+                        self.vel_end += Vec3::new(fwd.x, 0.0, fwd.z) * 4.0;
+                    }
+                }
+                let (end_y, mid_y) = ease(self.vel.y, -78.4, 0.98f32.powf(ticks));
+                (self.vel.y, self.vel_end.y) = (mid_y, end_y);
             }
         }
         if self.mode == shared::rules::SPECTATOR {
@@ -1828,9 +2014,30 @@ impl App {
                     self.vel.z = 0.0;
                 }
             }
+            let walking = !self.fly && !self.gliding;
+            let before = self.pos;
             let r = move_body(&self.world, &mut self.pos, &mut self.vel, HALF_W, HEIGHT, dt);
             self.on_ground = r.on_ground;
             self.hit_wall = r.hit_wall;
+            // Aide au developpement : EPICUBE_MESURE=1 ecrit la hauteur et la longueur de chaque saut.
+            if std::env::var_os("EPICUBE_MESURE").is_some() {
+                if !self.on_ground {
+                    let from = *self.leap.get_or_insert(before);
+                    self.leap_top = self.leap_top.max(self.pos.y - from.y);
+                } else if let Some(from) = self.leap.take() {
+                    println!("saut : {:.3} bloc de haut, {:.2} de long", self.leap_top, Vec3::new(self.pos.x - from.x, 0.0, self.pos.z - from.z).length());
+                    self.leap_top = 0.0;
+                }
+            }
+            if walking {
+                // Le corps a avance a sa vitesse moyenne ; il repart a sa vitesse de fin d'image, sauf sur
+                // les axes ou un bloc l'a arrete.
+                for k in 0..3 {
+                    if self.vel[k] != 0.0 {
+                        self.vel[k] = self.vel_end[k];
+                    }
+                }
+            }
         }
         if self.on_ground && !self.fly {
             self.bob += Vec3::new(self.vel.x, 0.0, self.vel.z).length() * dt * 1.9;
@@ -2039,6 +2246,9 @@ impl App {
         self.name_t = (self.name_t - dt).max(0.0);
         self.hurt_t = (self.hurt_t - dt).max(0.0);
         self.swing = (self.swing - dt).max(0.0);
+        let ground_speed = Vec3::new(self.vel.x, 0.0, self.vel.z).length();
+        self.walk += ground_speed * dt * 2.2;
+        turn_body(&mut self.body_yaw, self.yaw, ground_speed, dt);
         self.sneak_k += (self.sneaking as u8 as f32 - self.sneak_k) * (dt * 14.0).min(1.0);
         self.guard_k += (self.blocking as u8 as f32 - self.guard_k) * (dt * 12.0).min(1.0);
         // La main suit le regard avec un temps de retard.
@@ -2072,6 +2282,7 @@ impl App {
             r.air_k += (rising as u8 as f32 - r.air_k) * ease;
             r.sneak_k += (r.sneak as u8 as f32 - r.sneak_k) * (dt * 14.0).min(1.0);
             r.swing = (r.swing - dt).max(0.0);
+            turn_body(&mut r.body_yaw, r.yaw, r.speed, dt);
         }
         for d in self.drops.values_mut() {
             d.age += dt;
@@ -2107,10 +2318,29 @@ impl App {
         let moving = Vec3::new(self.vel.x, 0.0, self.vel.z).length().min(4.5) / 4.5;
         let sway = if st.bobbing && self.on_ground && !self.fly { moving } else { 0.0 };
         eye += right * (self.bob.sin() * 0.035 * sway) + Vec3::Y * ((self.bob * 2.0).sin().abs() * 0.045 * sway);
-        self.fov += (st.fov + if sprinting { 8.0 } else { 0.0 } - self.fov) * (dt * 8.0).min(1.0);
+        // Le champ de vision s'elargit de 15 % en courant, de 10 % en vol.
+        let wide = if sprinting { 1.15 } else if self.fly { 1.1 } else { 1.0 };
+        self.fov += (st.fov * wide - self.fov) * (dt * 8.0).min(1.0);
         let dir = look;
         let proj = Mat4::perspective_rh(self.fov.to_radians(), w / h, gfx::NEAR, gfx::FAR);
-        let view = Mat4::look_to_rh(eye, dir, Vec3::Y);
+        // Vue exterieure : la camera recule derriere le joueur (ou passe devant lui), sans traverser les murs.
+        let head = eye;
+        let (eye, dir, right, up) = if self.cam == 0 {
+            (eye, dir, right, up)
+        } else {
+            let away = if self.cam == 1 { -dir } else { dir };
+            let mut dist = 0.0;
+            while dist < 4.0 && !shared::blocks::solid(self.world.block_at(head + away * (dist + 0.4)), 0) {
+                dist += 0.2;
+            }
+            let look = if self.cam == 1 { dir } else { -dir };
+            let side = if self.cam == 1 { right } else { -right };
+            (head + away * dist, look, side, side.cross(look).normalize_or(Vec3::Y))
+        };
+        // Un coup recu fait pencher la tete un instant.
+        let jolt = (self.hurt_t / 0.4).clamp(0.0, 1.0);
+        let roll = ((1.0 - jolt).powi(2) * std::f32::consts::PI).sin() * 0.12 * if jolt > 0.0 { 1.0 } else { 0.0 };
+        let view = Mat4::look_to_rh(eye, dir, Quat::from_axis_angle(dir, roll) * Vec3::Y);
 
         // Ciel : 0 = lever du soleil, 0.25 = midi, 0.5 = coucher, 0.75 = minuit.
         let ang = self.time * std::f32::consts::TAU;
@@ -2196,52 +2426,37 @@ impl App {
                 continue;
             }
             let l = self.light_at(r.shown + Vec3::Y);
-            // Les membres balancent selon l'allure, s'ecartent en l'air ; le bras droit porte les gestes.
-            let pi = std::f32::consts::PI;
-            let stride = r.walk.sin() * 0.6 * (r.speed / 4.3).clamp(0.0, 1.35);
             let hit = match frozen_swing() {
-                Some(p) => (p.sqrt() * pi).sin(),
-                None if r.swing > 0.0 => ((1.0 - r.swing / SWING).sqrt() * pi).sin(),
+                Some(p) => (p.sqrt() * std::f32::consts::PI).sin(),
+                None if r.swing > 0.0 => ((1.0 - r.swing / SWING).sqrt() * std::f32::consts::PI).sin(),
                 None => 0.0,
             };
-            let level = -(1.5 + r.pitch.clamp(-1.2, 1.2));
-            let arm_r = if r.aim {
-                Some(Quat::from_rotation_x(level))
-            } else if r.guard {
-                Some(Quat::from_rotation_y(-0.5) * Quat::from_rotation_x(-1.15))
-            } else if hit > 0.0 {
-                Some(Quat::from_rotation_z(0.2 * hit) * Quat::from_rotation_x(-(0.3 + 1.5 * hit)))
-            } else {
-                None
+            let who = Person { feet: r.shown, yaw: r.yaw, body_yaw: r.body_yaw, pitch: r.pitch, walk: r.walk, speed: r.speed, air: r.air_k, sneak: r.sneak_k, hit, guard: r.guard, aim: r.aim, held: r.held, gear: r.gear, hurt: r.hurt > 0.0, breath: self.clock };
+            push_person(&mut ents, &self.skin_models[r.slot], shapes, &who, l);
+        }
+        // En vue exterieure, on se voit soi-meme, avec les memes gestes que les autres voient de nous.
+        if self.cam != 0 && !self.dead() && self.mode != shared::rules::SPECTATOR {
+            let hit = if self.swing > 0.0 { ((1.0 - self.swing / SWING).sqrt() * std::f32::consts::PI).sin() } else { 0.0 };
+            let gear = [0, 1, 2, 3].map(|i| self.armor.get(i).copied().flatten().map_or(0, |st| st.id));
+            let held = self.inv.get(self.sel).copied().flatten().map_or(0, |st| st.id);
+            let who = Person {
+                feet: self.pos,
+                yaw: self.yaw,
+                body_yaw: self.body_yaw,
+                pitch: self.pitch,
+                walk: self.walk,
+                speed: Vec3::new(self.vel.x, 0.0, self.vel.z).length(),
+                air: if self.on_ground || self.fly { 0.0 } else { 1.0 },
+                sneak: self.sneak_k,
+                hit,
+                guard: self.blocking,
+                aim: self.draw_t > 0.0,
+                held,
+                gear,
+                hurt: self.hurt_t > 0.0,
+                breath: self.clock,
             };
-            let arm_l = r.aim.then(|| Quat::from_rotation_y(-0.45) * Quat::from_rotation_x(level));
-            let st = Stance { swing: stride + (0.5 - stride) * r.air_k, bend: r.sneak_k, pitch: r.pitch, arm_r, arm_l };
-            let feet = r.shown - Vec3::Y * 0.12 * r.sneak_k;
-            push_player(&mut ents, &models[models::PLAYER], feet, r.yaw, &st, if r.hurt > 0.0 { [255, 110, 110, 255] } else { [255; 4] }, l);
-            push_gear(&mut ents, feet, r.yaw, &st, r.gear, l);
-            // L'objet tenu, dans la main droite : un outil se tient par le manche, pointe en avant.
-            if let Some(parts) = shapes.get(&r.held).filter(|_| r.held != 0) {
-                let (hand, q) = st.hand();
-                let tool = r.held >= 256 && matches!(itemdefs::pose(r.held), items3d::Pose::Tool);
-                // Le modele d'un outil est dresse, manche en bas : on le couche vers l'avant, tenu par le manche.
-                let (grip, size, center) = if r.held == items::SHIELD {
-                    // Le bouclier : dresse devant soi quand on pare, pendu au bras sinon.
-                    let grip = if r.guard { Quat::IDENTITY } else { q * Quat::from_rotation_y(pi / 2.0) };
-                    (grip, 0.7, hand + if r.guard { Vec3::new(0.12, 0.05, 0.14) } else { Vec3::new(-0.08, 0.1, 0.0) })
-                } else if r.held == items::YUMI {
-                    // L'arc : dresse dans l'axe du tir quand on vise.
-                    let grip = if r.aim { Quat::from_rotation_x(-r.pitch.clamp(-1.2, 1.2)) * Quat::from_rotation_y(pi / 2.0) } else { q * Quat::from_rotation_y(pi / 2.0) };
-                    (grip, 0.75, hand + if r.aim { Vec3::new(0.0, 0.0, 0.1) } else { Vec3::ZERO })
-                } else if tool {
-                    let grip = q * Quat::from_rotation_x(1.25) * Quat::from_rotation_y(pi / 2.0);
-                    (grip, 0.6, hand + grip * Vec3::Y * 0.6 * 0.42)
-                } else {
-                    (q, 0.26, hand + q * Vec3::new(0.0, -0.06, 0.1))
-                };
-                let basis = yaw_basis(r.yaw);
-                let world = |v: Vec3| basis[0] * v.x + basis[1] * v.y + basis[2] * v.z;
-                push_item(&mut ents, parts, feet + world(center), [world(grip * Vec3::X), world(grip * Vec3::Y), world(grip * Vec3::Z)], size, l);
-            }
+            push_person(&mut ents, &self.skin_models[skin::OWN], shapes, &who, self.light_at(self.pos + Vec3::Y));
         }
         // Objets au sol : petits cubes qui tournent et flottent.
         for d in self.drops.values() {
@@ -2346,7 +2561,7 @@ impl App {
 
         // Objet tenu en main, en bas a droite de l'ecran : il suit le coup de bras, s'abaisse quand on en
         // change ou que l'arme revient en garde, traine un peu derriere le regard.
-        if grabbed && !self.dead() && self.mode != shared::rules::SPECTATOR {
+        if grabbed && self.cam == 0 && !self.dead() && self.mode != shared::rules::SPECTATOR {
             let pi = std::f32::consts::PI;
             let p = frozen_swing().unwrap_or(if self.swing > 0.0 { 1.0 - self.swing / SWING } else { 0.0 });
             let (g, f) = ((p.sqrt() * pi).sin(), (p * p * pi).sin());
@@ -2393,12 +2608,18 @@ impl App {
                     None => push_box(&mut ents, origin, [spin(r2), spin(up), spin(f2)], Vec3::ZERO, Vec3::splat(0.1), [255; 4], Tex::Tile(items::icon(id)), l),
                 },
                 None => {
-                    // Main vide : on voit son bras, la manche puis la main.
+                    // Main vide : on voit son bras, tel que son skin le dessine (les deux couches).
                     let base = glam::Mat3::from_rotation_y(0.4) * glam::Mat3::from_rotation_x(0.6);
                     let axes = [cam(rot * base.x_axis), cam(rot * base.y_axis), cam(rot * base.z_axis)];
                     let at = origin - up * 0.1 + right * 0.06;
-                    push_box(&mut ents, at + axes[2] * 0.13, axes, Vec3::ZERO, Vec3::new(0.06, 0.06, 0.17), [255, 150, 60, 255], Tex::Flat, l);
-                    push_box(&mut ents, at - axes[2] * 0.1, axes, Vec3::ZERO, Vec3::new(0.052, 0.052, 0.07), [255, 214, 180, 255], Tex::Flat, l);
+                    // Le bras est une boite haute : son epaule vient vers nous, sa main pointe devant, le dos de la main en haut.
+                    let arm = [-axes[0], axes[2], axes[1]];
+                    let parts = &self.skin_models[skin::OWN].parts;
+                    for (k, grow) in [(2, 0.0), (8, 0.006)] {
+                        if let Some(part) = parts.get(k) {
+                            push_box(&mut ents, at, arm, Vec3::ZERO, Vec3::new(0.055 + grow, 0.2 + grow, 0.055 + grow), [255; 4], Tex::Faces(&part.uv), l);
+                        }
+                    }
                 }
             }
         }
@@ -2458,8 +2679,6 @@ pub enum Screen {
     Title,
     /// Les parties en ligne.
     Multi,
-    /// Reglages de la partie que l'on va heberger.
-    Host,
     Settings,
     Game,
     Pause,
@@ -2491,6 +2710,10 @@ pub struct Shell {
     pub rebinding: Option<usize>,
     /// La page des mods, quand elle est ouverte.
     pub library: Option<library::Library>,
+    /// L'editeur de skin, quand il est ouvert.
+    pub skin: Option<skin::Editor>,
+    /// La bibliotheque de skins, quand son onglet est ouvert.
+    pub shelf: Option<skinlib::Shelf>,
     /// L'annuaire des parties en ligne, quand l'ecran Multijoueur est ouvert.
     pub browser: Option<browser::Browser>,
     /// Les amis du joueur ; leur barre s'ouvre sur tous les ecrans.
@@ -2508,6 +2731,9 @@ pub struct Shell {
     pub mic_echo: bool,
     pub t: f32,
     models: Vec<Model>,
+    /// Les skins presents dans l'atlas, par case, et celles qu'il faut y recrire.
+    pub skins: Vec<Option<Vec<u8>>>,
+    pub skin_dirty: Vec<usize>,
     /// Modeles 3D des objets.
     shapes: items3d::Shapes,
     atlas: atlas::Img,
@@ -2548,10 +2774,30 @@ fn build_assets() -> (atlas::Img, Vec<Model>, items3d::Shapes, Vec<String>) {
     let mut shapes = items3d::build(&mut img);
     log.extend(items3d::load(Path::new(assets::DIR), &mut img, &mut shapes));
     items3d::icons(&mut img, &shapes);
+    // Le joueur a l'apparence de son skin.
+    models[models::PLAYER] = skin::model(skin::OWN);
     (img, models, shapes, log)
 }
 
 impl Shell {
+    /// Ferme l'editeur de skin : ce qui n'a pas ete enregistre est oublie.
+    pub fn close_skin(&mut self) {
+        self.shelf = None;
+        if let Some(ed) = self.skin.take() {
+            self.skins[skin::OWN] = Some(ed.saved().to_vec());
+            self.skin_dirty.push(skin::OWN);
+        }
+    }
+
+    /// Le skin vient d'etre enregistre : en partie, les autres joueurs le recoivent.
+    pub fn skin_saved(&mut self) {
+        if let (Some(g), Some(px)) = (self.game.as_mut(), self.skins[skin::OWN].as_ref()) {
+            if g.joined {
+                g.net.send(ClientMsg::Skin { data: skin::encode(px) });
+            }
+        }
+    }
+
     pub fn is_local(&self) -> bool {
         self.local.is_some()
     }
@@ -2696,8 +2942,10 @@ impl Shell {
             "" => format!("Partie de {who}"),
             n => n.to_string(),
         };
+        // Chaque mode qui garde son monde a le sien : « monde » pour la survie, le nom du mode pour les autres.
         let world = match self.host.world.trim() {
-            "" => "monde".to_string(),
+            "" if mode.id == "survie" => "monde".to_string(),
+            "" => mode.id.clone(),
             w => w.to_string(),
         };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -2883,18 +3131,17 @@ impl Shell {
                 Screen::Pause => Screen::Game,
                 Screen::PauseSettings => Screen::Pause,
                 Screen::Settings | Screen::Multi => Screen::Title,
-                Screen::Host => Screen::Multi,
                 s => s,
             };
             if self.screen == Screen::Title {
                 self.browser = None;
             }
             self.library = None;
+            self.close_skin();
             self.field = 0;
         }
         if inp.pressed.contains(&KeyCode::Tab) {
             match self.screen {
-                Screen::Host => self.field = self.field % 3 + 1,
                 Screen::Multi => self.field = if self.field == 1 { 2 } else { 1 },
                 _ => {}
             }
@@ -2920,6 +3167,20 @@ impl Shell {
         // Les mods viennent d'arriver : leurs textures entrent dans l'atlas.
         if let Some(img) = self.game.as_mut().and_then(|g| g.mods.as_mut()).and_then(|m| m.paint.take()) {
             gfx.set_mod_atlas(&img.0);
+            // Les skins partagent cette moitie de l'atlas : on les y remet.
+            self.skin_dirty = (0..skin::SLOTS).filter(|k| self.skins[*k].is_some()).collect();
+        }
+        // Les skins qui ont change (le notre, ceux des autres joueurs, ceux de la bibliotheque) rejoignent l'atlas.
+        if let Some(g) = self.game.as_mut() {
+            for (slot, px) in g.skin_out.drain(..) {
+                self.skins[slot] = Some(px);
+                self.skin_dirty.push(slot);
+            }
+        }
+        for slot in std::mem::take(&mut self.skin_dirty) {
+            if let Some(px) = &self.skins[slot] {
+                gfx.write_skin(slot, px);
+            }
         }
         let mut ui = match &mut out {
             Some(o) => std::mem::replace(&mut o.ui, Ui::new(w, h)),
@@ -3260,6 +3521,13 @@ fn main() {
         mic_echo: false,
         t: 0.0,
         models,
+        skins: {
+            let mut all = vec![None; skin::SLOTS];
+            all[skin::OWN] = Some(skin::load());
+            all[skin::DEFAULT] = Some(skin::default_skin());
+            all
+        },
+        skin_dirty: vec![skin::OWN, skin::DEFAULT],
         shapes,
         atlas: img,
         seed_text: arg("--seed").unwrap_or_default(),
@@ -3270,10 +3538,12 @@ fn main() {
         quit: false,
         showcase: false,
         library: None,
+        skin: None,
+        shelf: None,
         browser: None,
         modes: Vec::new(),
         friends: friends::Friends::new(None),
-        host: HostForm { pick: 0, name: String::new(), visibility: 0, places: 0, world: "monde".to_string(), seed: String::new() },
+        host: HostForm { pick: 0, name: String::new(), visibility: 0, places: 0, world: String::new(), seed: String::new() },
         party: None,
         party_dir: None,
     };
@@ -3305,21 +3575,22 @@ fn main() {
             }
             None => eprintln!("Mode de jeu inconnu : {mode}"),
         }
-    } else if flag("--solo") || demo.as_deref().is_some_and(|d| !matches!(d, "parametres" | "controles" | "multijoueur" | "amis" | "heberger" | "pause-partie")) {
+    } else if flag("--solo") || demo.as_deref().is_some_and(|d| !matches!(d, "parametres" | "controles" | "skin" | "skins" | "multijoueur" | "prive" | "amis" | "heberger" | "pause-partie")) {
         shell.start_solo();
     }
     match demo.as_deref() {
         Some("multijoueur") => shell.open_multi(),
+        // L'ecran Jouer, l'interrupteur sur « privee ».
+        Some("prive") => {
+            shell.open_multi();
+            shell.host.visibility = 1;
+        }
         Some("amis") => {
             // La barre des amis, depliee : sur l'ecran Jouer, ou en partie si l'on en heberge une.
             if shell.game.is_none() {
                 shell.open_multi();
             }
             shell.friends.open = true;
-        }
-        Some("heberger") => {
-            shell.open_multi();
-            shell.screen = Screen::Host;
         }
         Some("pause-partie") => shell.screen = Screen::Pause,
         Some("controles") => {
@@ -3328,6 +3599,19 @@ fn main() {
         }
         Some("pause") => shell.screen = Screen::Pause,
         Some("parametres") => shell.screen = Screen::Settings,
+        Some("skin") => {
+            shell.screen = Screen::Settings;
+            shell.skin = Some(skin::Editor::open());
+        }
+        // L'onglet de la bibliotheque de skins.
+        Some("skins") => {
+            shell.screen = Screen::Settings;
+            let mut ed = skin::Editor::open();
+            ed.tab = 1;
+            shell.skin = Some(ed);
+            shell.shelf = Some(skinlib::Shelf::open(shell.account.as_ref().map(|a| a.token.clone())));
+            shell.field = 1;
+        }
         Some(_) => shell.showcase = true,
         None => {}
     }
@@ -3445,6 +3729,14 @@ fn main() {
                             if has("face") && before < 2.4 && geste_t >= 2.4 {
                                 if let Some(g) = shell.game.as_mut() {
                                     g.yaw += std::f32::consts::PI * if has("profil") { 0.5 } else { 1.0 };
+                                }
+                            }
+                            // « dos » et « devant » : la vue exterieure.
+                            if let Some(g) = shell.game.as_mut() {
+                                if has("dos") {
+                                    g.cam = 1;
+                                } else if has("devant") {
+                                    g.cam = 2;
                                 }
                             }
                             let acting = !has("face") || geste_t > 3.0;

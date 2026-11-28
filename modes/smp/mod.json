@@ -1,0 +1,15 @@
+{
+  "id": "smp",
+  "name": "SMP",
+  "version": "1.0.0",
+  "description": "La survie à plusieurs dans un monde gardé : des maisons où revenir, la téléportation entre amis, un hôtel des ventes.",
+  "author": "Epicube",
+  "mode": {
+    "name": "SMP",
+    "about": "La survie à plusieurs dans un monde gardé : des maisons où revenir, la téléportation entre amis, un hôtel des ventes.",
+    "tags": ["survie", "smp", "economie"],
+    "players": 30,
+    "game": "survie",
+    "keep_world": true
+  }
+}

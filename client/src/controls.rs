@@ -6,7 +6,7 @@
 use winit::keyboard::KeyCode;
 
 /// Nombre d'actions.
-pub const COUNT: usize = 24;
+pub const COUNT: usize = 25;
 
 /// Les actions, dans l'ordre de la page des controles.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -26,6 +26,7 @@ pub enum Act {
     Mode,
     Borders,
     Friends,
+    Camera,
     Slot1,
 }
 
@@ -46,6 +47,7 @@ const TABLE: [(&str, &str, KeyCode); COUNT] = [
     ("mode", "Changer de mode de jeu", KeyCode::F4),
     ("bordures", "Bordures des chunks", KeyCode::F6),
     ("amis", "Barre des amis", KeyCode::KeyO),
+    ("vue", "Changer de vue", KeyCode::F5),
     ("case1", "Barre rapide : case 1", KeyCode::Digit1),
     ("case2", "Barre rapide : case 2", KeyCode::Digit2),
     ("case3", "Barre rapide : case 3", KeyCode::Digit3),

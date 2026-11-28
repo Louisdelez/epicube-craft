@@ -3,7 +3,7 @@ use crate::items::Slot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 21;
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Nature d'une ligne de chat.
 pub mod chat {
@@ -38,6 +38,9 @@ pub mod sound {
     /// De l'experience gagnee.
     pub const XP: u8 = 12;
 }
+/// Taille maximale d'un skin envoye au serveur, en octets (une image PNG de 64 x 64).
+pub const MAX_SKIN: usize = 24 << 10;
+
 /// Gestes et postures d'un joueur, montres aux autres.
 pub mod act {
     /// Un coup de bras : frapper, miner, poser.
@@ -124,6 +127,8 @@ pub enum ClientMsg {
     Aim(bool),
     /// S'accroupit ou se releve.
     Sneak(bool),
+    /// Le skin du joueur : une image PNG de 64 x 64, que les autres joueurs recoivent.
+    Skin { data: Vec<u8> },
     /// Accepte l'offre numero `index` de l'autel d'enchantement.
     Enchant { index: u8 },
     /// Reunit sur l'enclume les deux objets poses.
@@ -235,6 +240,8 @@ pub enum ServerMsg {
     ShieldDown { secs: f32 },
     /// Geste ou posture d'un autre joueur ; `act` est l'une des constantes du module `act`.
     PlayerAct { id: u32, act: u8 },
+    /// Le skin d'un autre joueur (une image PNG de 64 x 64).
+    PlayerSkin { id: u32, data: Vec<u8> },
     /// Experience du joueur : son niveau, et la part du suivant deja acquise (0 a 1).
     Xp { level: u32, progress: f32 },
     /// Ce que propose l'autel d'enchantement ouvert, entoure de `shelves` bibliotheques.

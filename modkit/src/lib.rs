@@ -75,6 +75,11 @@ pub mod op {
     pub const CHEST: u32 = 46;
     /// Enchante l'objet que tient le joueur : joueur, enchantement, niveau.
     pub const ENCHANT: u32 = 47;
+    /// Prend la pile que tient le joueur : rend son nom, son nombre, et un jeton qui la decrit entiere
+    /// (usure et enchantements compris), a rendre tel quel a `GIVE_STACK`.
+    pub const TAKE_HELD: u32 = 48;
+    /// Donne au joueur la pile que decrit un jeton rendu par `TAKE_HELD`.
+    pub const GIVE_STACK: u32 = 49;
     // Côté client.
     pub const C_LOG: u32 = 100;
     pub const C_SEND: u32 = 102;

@@ -4,7 +4,7 @@
 
 À l'écran titre :
 
-- **Jouer** : la liste des modes de jeu ; pour chacun, les parties à rejoindre et un « + » pour créer la sienne, publique, privée ou solo (voir [Jouer et serveurs](serveur.md)).
+- **Jouer** : la liste des modes de jeu ; pour chacun, les parties à rejoindre et un « + » pour créer aussitôt la sienne, publique ou privée (voir [Jouer et serveurs](serveur.md)).
 - **Paramètres** : affichage, son, micro, performances.
 
 À la création d'un monde, vous réglez aussi le [mode de jeu](#modes-de-jeu), la [difficulté](#difficultés) et la **triche** (le droit de changer de mode et d'utiliser les commandes qui modifient la partie).
@@ -34,6 +34,10 @@ Toutes ces touches se changent dans **Paramètres → Contrôles** : on clique s
 | Menu pause, fermer une fenêtre | `Échap` |
 | Réapparaître après la mort | `Entrée` |
 
+**Le corps.** Le personnage se déplace comme dans Minecraft : 4,3 blocs par seconde à la marche, 5,6 en courant, un saut d'un bloc et quart. Au sol il s'arrête net ; en l'air il garde son élan ; sur la glace il glisse ; dans l'eau tout est freiné, et `Espace` fait remonter. Un saut pris en courant porte plus loin, et `Espace` tenu fait ressauter. On court avec `Maj`, ou en appuyant deux fois de suite sur « avancer ». Tout cela ne dépend pas de la cadence d'affichage.
+
+**La vue.** `F5` change de vue : à la première personne (on voit son bras, tel que son skin le dessine), de dos, puis de face. De l'extérieur on se voit marcher, courir, sauter, frapper, exactement comme les autres nous voient : la tête suit le regard pendant que le buste tourne avec un temps de retard, les bras respirent au repos. Le champ de vision s'élargit en courant, et un coup reçu fait pencher la tête un instant.
+
 **S'accroupir** (`Ctrl` gauche maintenu) : on avance à petits pas sans jamais tomber d'un bord, et le regard s'abaisse. Les autres joueurs voient la posture, comme ils voient l'objet tenu, les coups de bras, le bouclier levé, l'arc tendu, la course et les sauts.
 
 En vol (créatif et spectateur) : `Espace` monte, `Ctrl` gauche descend, `Maj` accélère. En créatif, deux appuis rapides sur `Espace` font décoller ou atterrir.
@@ -57,6 +61,20 @@ Les mêmes règles valent contre les créatures et, quand la partie l'autorise, 
 - **Invulnérabilité** : une demi-seconde après un coup reçu ; seul un coup plus fort passe, pour la différence.
 - **Bouclier** : il pare un quart de seconde après avoir été levé, et renvoie un peu l'attaquant. Une **hache** l'abat : cinq secondes sans pouvoir le relever.
 - **Armure** : elle retire une part des dégâts et amortit le recul ; elle s'use à chaque coup.
+
+### Skin
+
+**Paramètres → Skin** ouvre l'atelier où l'on dessine son personnage. Un skin est une image de 64 × 64 pixels, au format de Minecraft : un skin de Minecraft s'y importe tel quel.
+
+**L'éditeur.** À gauche, le personnage (on le fait tourner en le saisissant) ; au milieu, la face que l'on peint, pixel par pixel ; à droite, les outils et les couleurs.
+
+- On choisit une **partie** (tête, buste, bras, jambes) puis une **face** (devant, derrière, droite, gauche, dessus, dessous).
+- Chaque partie a deux **couches** : la première est le corps, la seconde se pose par-dessus (cheveux qui dépassent, chapeau, veste, manches). Les pixels vides de la seconde laissent voir la première.
+- **Pinceau**, **gomme** (elle n'efface que la seconde couche), **pot** (remplit une plage de même couleur), **pipette** (reprend une couleur du dessin), **miroir** (peint aussi le pixel symétrique), **annuler**.
+- **Enregistrer** garde le skin (`saves/skin.png`) ; en partie, les autres joueurs le voient aussitôt. **Retour** sans enregistrer abandonne les changements.
+- **Importer** lit le fichier `skin.png` posé dans le dossier du jeu ; **Exporter** l'y écrit. **Skin de départ** revient au voyageur d'origine.
+
+**La bibliothèque.** L'autre onglet montre les skins que les joueurs ont publiés : on cherche par nom ou par auteur, on en choisit un, **Porter ce skin** le met sur son personnage (il reste à l'enregistrer dans l'éditeur). **Publier mon skin** partage le sien sous le nom que l'on donne ; il faut être connecté à son compte, donc avoir lancé le jeu depuis Epicube Hub. On retire ses propres skins avec **Retirer** (trente au plus par compte).
 
 ### Expérience et enchantements
 

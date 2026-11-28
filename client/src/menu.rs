@@ -16,7 +16,7 @@ pub enum Action {
     Leave,
     Export,
     Reload,
-    /// Heberger la partie preparee a l'ecran « Heberger ».
+    /// Creer une partie du mode choisi, publique ou privee selon l'interrupteur.
     Host,
     /// Rejoindre la partie a cette adresse.
     JoinAt(String),
@@ -187,7 +187,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 None => format!("Hors ligne : {}", sh.settings.name),
             };
             wd.ui.text(w - Ui::text_width(&who, s) - 4.0 * s, h - 12.0 * s, s, &who, GREY);
-            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.14", GREY);
+            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.15", GREY);
         }
         Screen::Multi => {
             title(&mut wd, "Jouer", (h * 0.03).floor(), 3.0 * s);
@@ -266,19 +266,42 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             let rows = b.shown();
             wd.ui.text(lx, head + 6.0 * s, s, &format!("{picked_name} : {} partie{}", rows.len(), if rows.len() > 1 { "s" } else { "" }), [1.0, 0.86, 0.36, 1.0]);
             // Recherche parmi les parties, puis le petit « + » : creer sa propre partie de ce mode.
-            if wd.field(lx + lw - 176.0 * s, head, 150.0 * s, bh, "", &b.query, sh.field == 2, blink) {
+            let hostable = sh.modes.iter().position(|m| m.id == b.mode);
+            // A cote du « + », un interrupteur a glissiere : allume, la partie que l'on cree est privee (reservee aux amis).
+            let label = "Privée";
+            let (sw, sh_) = (22.0 * s, 12.0 * s);
+            let tw = Ui::text_width(label, s) + 5.0 * s + sw;
+            let (plus_x, toggle_x) = (lx + lw - bh, lx + lw - bh - 8.0 * s - tw);
+            let search_x = toggle_x - 8.0 * s - 150.0 * s;
+            if wd.field(search_x, head, 150.0 * s, bh, "", &b.query, sh.field == 2, blink) {
                 sh.field = 2;
             }
             if b.query.is_empty() && sh.field != 2 {
-                wd.ui.text(lx + lw - 171.0 * s, head + 6.0 * s, s, "Rechercher une partie", GREY);
+                wd.ui.text(search_x + 5.0 * s, head + 6.0 * s, s, "Rechercher une partie", GREY);
             }
-            let hostable = sh.modes.iter().position(|m| m.id == b.mode);
-            if hostable.is_some() && wd.button(lx + lw - bh, head, bh, bh, "+") {
-                sh.host.pick = hostable.unwrap_or(0);
-                sh.host.places = 0;
-                sh.screen = Screen::Host;
-                sh.field = 1;
-                return action;
+            if hostable.is_some() {
+                let private = sh.host.visibility == 1;
+                wd.ui.text(toggle_x, head + 6.0 * s, s, label, if private { WHITE } else { GREY });
+                // La glissiere : une pastille arrondie, grise eteinte, verte allumee, et son bouton blanc.
+                let (x, y) = (toggle_x + tw - sw, head + ((bh - sh_) / 2.0).floor());
+                let track = if private { [0.2, 0.78, 0.35, 1.0] } else { [0.34, 0.34, 0.4, 1.0] };
+                let pill = |ui: &mut Ui, x: f32, y: f32, w: f32, h: f32, col: [f32; 4]| {
+                    ui.rect(x + 2.0 * s, y, w - 4.0 * s, h, col);
+                    ui.rect(x + s, y + s, w - 2.0 * s, h - 2.0 * s, col);
+                    ui.rect(x, y + 2.0 * s, w, h - 4.0 * s, col);
+                };
+                pill(wd.ui, x, y, sw, sh_, track);
+                let kx = if private { x + sw - sh_ + s } else { x + s };
+                pill(wd.ui, kx, y + s, sh_ - 2.0 * s, sh_ - 2.0 * s, WHITE);
+                if wd.over(toggle_x, head, tw, bh) && wd.click {
+                    crate::audio::play("clic", 0.6);
+                    sh.host.visibility = if private { 0 } else { 1 };
+                }
+                // Le « + » cree aussitot une partie du mode choisi.
+                if wd.button(plus_x, head, bh, bh, "+") {
+                    sh.host.pick = hostable.unwrap_or(0);
+                    action = Action::Host;
+                }
             }
             let (y3, rh) = (head + bh + 6.0 * s, 26.0 * s);
             let per_page = (((bottom - 28.0 * s - y3) / (rh + 2.0 * s)).floor().max(1.0)) as usize;
@@ -362,78 +385,90 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 }
             }
         }
-        Screen::Host => {
-            title(&mut wd, "Créer une partie", (h * 0.05).floor(), 3.0 * s);
-            let form = &mut sh.host;
-            let Some(mode) = sh.modes.get(form.pick).cloned() else {
-                sh.screen = Screen::Multi;
-                return action;
-            };
-            let mut y = (h * 0.05).floor() + 44.0 * s;
-            if wd.button(x, y, bw, bh, &format!("Mode de jeu : {}", mode.name)) {
-                form.pick = (form.pick + 1) % sh.modes.len().max(1);
-                form.places = 0;
-            }
-            y += bh + gap + 12.0 * s;
-            if wd.field(x, y, bw, bh, "Nom de la partie", &form.name, sh.field == 1, blink) {
-                sh.field = 1;
-            }
-            y += bh + gap;
-            let who = match form.visibility {
-                0 => "Publique",
-                1 => "Privée",
-                _ => "Solo",
-            };
-            if wd.button(x, y, bw, bh, &format!("Visibilité : {who}")) {
-                form.visibility = (form.visibility + 1) % 3;
-            }
-            y += bh + gap;
-            let places = if form.places == 0 { mode.players } else { form.places };
-            if form.visibility < 2 {
-                if wd.button(x, y, bw, bh, &format!("Places : {places}")) {
-                    let steps = [2u16, 4, 8, 12, 16, 24, 32, 50, 100];
-                    form.places = steps.iter().copied().find(|p| *p > places).unwrap_or(steps[0]);
-                }
-                y += bh + gap;
-            }
-            if mode.keep_world {
-                // Un monde garde d'une partie a l'autre : son nom, et sa graine s'il est neuf.
-                let half = (bw / 2.0 - 3.0 * s).floor();
-                y += 12.0 * s;
-                if wd.field(x, y, half, bh, "Monde", &form.world, sh.field == 2, blink) {
-                    sh.field = 2;
-                }
-                let exists = std::path::Path::new("saves").join(form.world.trim()).join("graine.txt").exists();
-                if exists {
-                    wd.ui.text(x + bw - half, y + 6.0 * s, s, "Ce monde existe déjà.", GREY);
-                } else if wd.field(x + bw - half, y, half, bh, "Graine", &form.seed, sh.field == 3, blink) {
-                    sh.field = 3;
-                }
-                y += bh + gap;
-            }
-            y += 6.0 * s;
-            if wd.button(x, y, bw, bh, "Lancer la partie") {
-                action = Action::Host;
-            }
-            y += bh + gap;
-            if wd.button(x, y, bw, bh, "Retour") {
-                sh.screen = Screen::Multi;
-                sh.field = 1;
-            }
-            match sh.field {
-                1 => type_into(&mut form.name, inp, 32, seed_char),
-                2 if mode.keep_world => type_into(&mut form.world, inp, 24, name_char),
-                3 if mode.keep_world => type_into(&mut form.seed, inp, 32, seed_char),
-                _ => {}
-            }
-        }
         Screen::Settings | Screen::PauseSettings => {
-            title(&mut wd, if sh.keys_page { "Contrôles" } else { "Paramètres" }, (h * 0.06).floor(), 3.0 * s);
+            if sh.skin.is_none() {
+                title(&mut wd, if sh.keys_page { "Contrôles" } else { "Paramètres" }, (h * 0.06).floor(), 3.0 * s);
+            }
             // Deux colonnes.
             let cw = 190.0 * s;
             let (x1, x2) = ((w / 2.0 - cw - 3.0 * s).floor(), (w / 2.0 + 3.0 * s).floor());
             let y0 = (h * 0.06).floor() + 40.0 * s;
             let row = |k: f32| y0 + k * (bh + gap);
+            if sh.skin.is_some() {
+                // L'editeur de skin : il occupe tout l'ecran des parametres.
+                title(&mut wd, "Skin", (h * 0.03).floor(), 3.0 * s);
+                let pw = (w - 24.0 * s).min(440.0 * s);
+                let (px, py) = (((w - pw) / 2.0).floor(), (h * 0.03).floor() + 34.0 * s);
+                let ph = h - py - 6.0 * s;
+                wd.ui.rect(px - 6.0 * s, py - 6.0 * s, pw + 12.0 * s, ph + 6.0 * s, [0.07, 0.07, 0.1, 0.93]);
+                // Deux onglets : dessiner son skin, ou feuilleter ceux que les joueurs ont publies.
+                let tab = sh.skin.as_ref().map_or(0, |e| e.tab);
+                for (k, name) in ["Éditeur", "Bibliothèque"].into_iter().enumerate() {
+                    let (tx, tw) = (px + k as f32 * 92.0 * s, 90.0 * s);
+                    let hot = wd.over(tx, py, tw, bh);
+                    wd.ui.bevel(tx, py, tw, bh, s, if tab == k { [0.85, 0.65, 0.16, 1.0] } else if hot { [0.3, 0.3, 0.4, 1.0] } else { [0.14, 0.14, 0.19, 1.0] }, [0.4, 0.4, 0.5, 1.0], [0.06, 0.06, 0.09, 1.0]);
+                    wd.label(tx, py, tw, bh, name, WHITE);
+                    if hot && wd.click && tab != k {
+                        if let Some(ed) = sh.skin.as_mut() {
+                            ed.tab = k;
+                        }
+                        if k == 1 && sh.shelf.is_none() {
+                            sh.shelf = Some(crate::skinlib::Shelf::open(sh.account.as_ref().map(|a| a.token.clone())));
+                        }
+                        sh.field = if k == 1 { 1 } else { 0 };
+                    }
+                }
+                let (cy, chh) = (py + bh + 6.0 * s, ph - bh - 6.0 * s);
+                let model = sh.models[crate::models::PLAYER].clone();
+                let mut ask = crate::skin::Ask::Nothing;
+                let tab = sh.skin.as_ref().map_or(0, |e| e.tab);
+                if tab == 1 {
+                    let mine = sh.skins[crate::skin::OWN].clone().unwrap_or_else(crate::skin::default_skin);
+                    let mut field = sh.field as u8;
+                    let mut wear = None;
+                    if let Some(shelf) = sh.shelf.as_mut() {
+                        shelf.poll();
+                        match shelf.draw(wd.ui, &mine, wd.mouse, wd.click, px, cy, pw, chh, s, sh.t, &mut field) {
+                            crate::skinlib::Ask::Wear(skin) => wear = Some(skin),
+                            crate::skinlib::Ask::Close => ask = crate::skin::Ask::Close,
+                            crate::skinlib::Ask::Nothing => {}
+                        }
+                        match field {
+                            1 => type_into(&mut shelf.query, inp, 24, seed_char),
+                            2 => type_into(&mut shelf.name, inp, 24, seed_char),
+                            _ => {}
+                        }
+                        // Les skins de la page rejoignent l'atlas, chacun dans sa case.
+                        for (slot, skin) in shelf.fresh.drain(..) {
+                            sh.skins[slot] = Some(skin);
+                            sh.skin_dirty.push(slot);
+                        }
+                    }
+                    sh.field = field as _;
+                    if let (Some(skin), Some(ed)) = (wear, sh.skin.as_mut()) {
+                        // Le skin choisi devient celui que l'on dessine : on revient a l'editeur pour l'enregistrer.
+                        ed.take(skin);
+                        ed.tab = 0;
+                        ed.note = "Skin de la bibliothèque : enregistrez pour le garder.".into();
+                    }
+                } else if let Some(ed) = sh.skin.as_mut() {
+                    ask = ed.draw(wd.ui, &model, wd.mouse, wd.click, wd.down, px, cy, pw, chh, s, 1.0 / 60.0);
+                }
+                if let Some(ed) = sh.skin.as_mut() {
+                    if ed.dirty {
+                        // Le dessin en cours se voit aussitot sur le personnage.
+                        ed.dirty = false;
+                        sh.skins[crate::skin::OWN] = Some(ed.px.clone());
+                        sh.skin_dirty.push(crate::skin::OWN);
+                    }
+                }
+                match ask {
+                    crate::skin::Ask::Close => sh.close_skin(),
+                    crate::skin::Ask::Saved => sh.skin_saved(),
+                    crate::skin::Ask::Nothing => {}
+                }
+                return action;
+            }
             if let Some(lib) = sh.library.as_mut() {
                 // Page des mods : la bibliotheque d'Epicube Hub et ce qui est installe.
                 lib.poll();
@@ -715,6 +750,9 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             }
             if wd.button(x1, row(6.0) + 12.0 * s, cw, bh, "Contrôles") {
                 sh.keys_page = true;
+            }
+            if wd.button(x1, row(7.0) + 12.0 * s, cw, bh, "Skin") {
+                sh.skin = Some(crate::skin::Editor::open());
             }
             if !in_game && wd.button(x2, row(6.0) + 12.0 * s, cw, bh, "Mods") {
                 sh.library = Some(crate::library::Library::open());

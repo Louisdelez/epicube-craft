@@ -585,6 +585,29 @@ impl Gfx {
         write_atlas(&self.queue, &self.atlas_tex, tiles, true);
     }
 
+    /// Ecrit un skin (64 x 64 pixels) dans sa case de l'atlas, a tous les niveaux de detail.
+    pub fn write_skin(&mut self, slot: usize, skin: &[u8]) {
+        let (sx, sy) = crate::skin::origin(slot);
+        let (mut level, mut w, mut at) = (skin.to_vec(), crate::skin::SIZE, AT);
+        for mip in 0..MIPS {
+            if w == 0 {
+                break;
+            }
+            let k = 1usize << mip;
+            // La moitie de l'atlas reservee aux mods commence a mi-hauteur de la texture.
+            let origin = wgpu::Origin3d { x: (sx / k) as u32, y: (at + sy / k) as u32, z: 0 };
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture { texture: &self.atlas_tex, mip_level: mip, origin, aspect: wgpu::TextureAspect::All },
+                &level,
+                wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * w as u32), rows_per_image: Some(w as u32) },
+                wgpu::Extent3d { width: w as u32, height: w as u32, depth_or_array_layers: 1 },
+            );
+            level = halve(&level, w);
+            w /= 2;
+            at /= 2;
+        }
+    }
+
     /// Taille, en pixels, de l'image de la scene avant agrandissement.
     fn scene_size(&self) -> (u32, u32) {
         (((self.config.width as f32 * self.scale).round() as u32).max(1), ((self.config.height as f32 * self.scale).round() as u32).max(1))

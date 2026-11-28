@@ -30,7 +30,7 @@ pub const PART: usize = 128 << 10;
 pub const FIRST_BLOCK: u8 = 160;
 /// Tuiles reservees aux textures des mods : elles occupent un second carre, sous l'atlas du jeu.
 pub const FIRST_TILE: u16 = 1024;
-pub const TILES: u16 = 768;
+pub const TILES: u16 = 704;
 /// Modeles de creatures de mods par partie : leurs textures occupent le bas du carre des mods.
 pub const MODELS: usize = 16;
 /// Longueur maximale du nom et du contenu d'un message entre le script serveur et le script client.
