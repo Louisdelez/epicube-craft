@@ -271,7 +271,12 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             let label = "Privée";
             let (sw, sh_) = (22.0 * s, 12.0 * s);
             let tw = Ui::text_width(label, s) + 5.0 * s + sw;
-            let (plus_x, toggle_x) = (lx + lw - bh, lx + lw - bh - 8.0 * s - tw);
+            let endless = hostable.is_some_and(|k| sh.modes[k].keep_world);
+            let disk_x = lx + lw - 2.0 * bh - 4.0 * s;
+            let (plus_x, toggle_x) = (lx + lw - bh, if endless { disk_x } else { lx + lw - bh } - 8.0 * s - tw);
+            if !endless {
+                sh.saves_open = false;
+            }
             let search_x = toggle_x - 8.0 * s - 150.0 * s;
             if wd.field(search_x, head, 150.0 * s, bh, "", &b.query, sh.field == 2, blink) {
                 sh.field = 2;
@@ -297,13 +302,74 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     crate::audio::play("clic", 0.6);
                     sh.host.visibility = if private { 0 } else { 1 };
                 }
-                // Le « + » cree aussitot une partie du mode choisi.
+                // La disquette : les parties sauvegardees de ce mode, a reprendre.
+                if endless {
+                    let hot = wd.over(disk_x, head, bh, bh);
+                    let on = sh.saves_open;
+                    wd.ui.bevel(disk_x, head, bh, bh, s, if on || hot { [0.85, 0.65, 0.16, 1.0] } else { [0.16, 0.16, 0.22, 1.0] }, [0.4, 0.4, 0.5, 1.0], [0.06, 0.06, 0.09, 1.0]);
+                    let (dx, dy, u) = (disk_x + ((bh - 10.0 * s) / 2.0).floor(), head + ((bh - 10.0 * s) / 2.0).floor(), s);
+                    wd.ui.rect(dx, dy, 10.0 * u, 10.0 * u, [0.22, 0.32, 0.62, 1.0]);
+                    wd.ui.rect(dx + 8.0 * u, dy, 2.0 * u, 2.0 * u, if on || hot { [0.85, 0.65, 0.16, 1.0] } else { [0.16, 0.16, 0.22, 1.0] });
+                    wd.ui.rect(dx + 2.0 * u, dy, 5.0 * u, 3.0 * u, [0.82, 0.84, 0.9, 1.0]);
+                    wd.ui.rect(dx + 5.0 * u, dy + u * 0.5, u, 2.0 * u, [0.22, 0.32, 0.62, 1.0]);
+                    wd.ui.rect(dx + 2.0 * u, dy + 5.0 * u, 6.0 * u, 5.0 * u, [0.95, 0.95, 0.97, 1.0]);
+                    wd.ui.rect(dx + 3.0 * u, dy + 7.0 * u, 4.0 * u, u * 0.6, [0.5, 0.52, 0.6, 1.0]);
+                    if hot && wd.click {
+                        crate::audio::play("clic", 0.6);
+                        sh.saves_open = !sh.saves_open;
+                        sh.doomed = None;
+                    }
+                }
+                // Le « + » cree aussitot une partie du mode choisi. Dans un mode sans fin, c'est une partie
+                // neuve, sauvegardee toute seule.
                 if wd.button(plus_x, head, bh, bh, "+") {
                     sh.host.pick = hostable.unwrap_or(0);
+                    sh.host.world.clear();
                     action = Action::Host;
                 }
             }
             let (y3, rh) = (head + bh + 6.0 * s, 26.0 * s);
+            if sh.saves_open {
+                let mode = hostable.map(|k| (sh.modes[k].id.clone(), sh.modes[k].name.clone())).unwrap_or_default();
+                let list = crate::saves::list(&mode.0, &mode.1);
+                let now = crate::saves::now();
+                // Par-dessus le compte des parties en ligne : celui des parties sauvegardees.
+                wd.ui.rect(lx - s, head, search_x - lx - 4.0 * s, bh, [0.09, 0.09, 0.13, 1.0]);
+                wd.ui.text(lx, head + 6.0 * s, s, &format!("{} : {} sauvegarde{}", mode.1, list.len(), if list.len() > 1 { "s" } else { "" }), [1.0, 0.86, 0.36, 1.0]);
+                if list.is_empty() {
+                    let text = "Aucune partie sauvegardée. Le « + » en crée une.";
+                    wd.ui.text((mx + (mw - Ui::text_width(text, s)) / 2.0).floor(), y3 + 40.0 * s, s, text, GREY);
+                }
+                let room = (((bottom - 8.0 * s - y3) / (rh + 2.0 * s)).floor().max(1.0)) as usize;
+                for (k, save) in list.iter().take(room).enumerate() {
+                    let y = y3 + k as f32 * (rh + 2.0 * s);
+                    let hot = wd.over(lx, y, lw, rh);
+                    wd.ui.rect(lx, y, lw, rh, if hot { [0.2, 0.2, 0.28, 1.0] } else { [0.12, 0.12, 0.16, 1.0] });
+                    wd.ui.text(lx + 6.0 * s, y + 4.0 * s, s, &save.name, WHITE);
+                    wd.ui.text(lx + 6.0 * s, y + 15.0 * s, s, &crate::saves::ago(save.played, now), GREY);
+                    if wd.button(lx + lw - 76.0 * s, y + 3.0 * s, 72.0 * s, bh, "Reprendre") {
+                        sh.host.pick = hostable.unwrap_or(0);
+                        sh.host.world = save.world.clone();
+                        sh.saves_open = false;
+                        action = Action::Host;
+                    }
+                    // Supprimer demande deux clics : le second confirme.
+                    let sure = sh.doomed.as_deref() == Some(save.world.as_str());
+                    if wd.button(lx + lw - 156.0 * s, y + 3.0 * s, 76.0 * s, bh, if sure { "Confirmer ?" } else { "Supprimer" }) {
+                        if sure {
+                            crate::saves::delete(&save.world);
+                            sh.doomed = None;
+                        } else {
+                            sh.doomed = Some(save.world.clone());
+                        }
+                    }
+                }
+                match sh.field {
+                    1 => type_into(&mut b.mode_query, inp, 16, seed_char),
+                    _ => type_into(&mut b.query, inp, 20, seed_char),
+                }
+                return action;
+            }
             let per_page = (((bottom - 28.0 * s - y3) / (rh + 2.0 * s)).floor().max(1.0)) as usize;
             let pages = rows.len().div_ceil(per_page).max(1);
             b.page = b.page.min(pages - 1);

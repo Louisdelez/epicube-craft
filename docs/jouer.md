@@ -34,7 +34,7 @@ Toutes ces touches se changent dans **Paramètres → Contrôles** : on clique s
 | Menu pause, fermer une fenêtre | `Échap` |
 | Réapparaître après la mort | `Entrée` |
 
-**Le corps.** Le personnage se déplace comme dans Minecraft : 4,3 blocs par seconde à la marche, 5,6 en courant, un saut d'un bloc et quart. Au sol il s'arrête net ; en l'air il garde son élan ; sur la glace il glisse ; dans l'eau tout est freiné, et `Espace` fait remonter. Un saut pris en courant porte plus loin, et `Espace` tenu fait ressauter. On court avec `Maj`, ou en appuyant deux fois de suite sur « avancer ». Tout cela ne dépend pas de la cadence d'affichage.
+**Le corps.** Le personnage se déplace comme dans Minecraft : 4,3 blocs par seconde à la marche, 5,6 en courant, un saut d'un bloc et quart. Au sol il s'arrête net ; en l'air il garde son élan ; sur la glace il glisse ; dans l'eau tout est freiné, et `Espace` fait remonter. Un saut pris en courant porte plus loin, et `Espace` tenu fait ressauter. On court avec `Maj`, ou en appuyant deux fois de suite sur « avancer ». Tout cela ne dépend pas de la cadence d'affichage. Les autres joueurs et les créatures glissent d'une position à l'autre sans à-coups : le jeu estime leur vitesse et prolonge leur course entre deux nouvelles du serveur.
 
 **La vue.** `F5` change de vue : à la première personne (on voit son bras, tel que son skin le dessine), de dos, puis de face. De l'extérieur on se voit marcher, courir, sauter, frapper, exactement comme les autres nous voient : la tête suit le regard pendant que le buste tourne avec un temps de retard, les bras respirent au repos. Le champ de vision s'élargit en courant, et un coup reçu fait pencher la tête un instant.
 

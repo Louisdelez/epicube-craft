@@ -19,7 +19,17 @@ Il n'y a rien à régler : ni port à ouvrir, ni box à toucher. Une partie que 
 - **Publique** : elle figure dans la liste, tout le monde peut la rejoindre.
 - **Privée** : elle figure dans la liste avec un cadenas ; seuls les **amis** de celui qui l'héberge peuvent y entrer.
 
-Le « + » crée aussitôt la partie du mode choisi, sans rien demander d'autre. Les modes qui gardent leur monde ont chacun le leur : `monde` pour la survie, `creatif` pour le créatif, `faction` pour le PvP Faction.
+Le « + » crée aussitôt la partie du mode choisi, sans rien demander d'autre.
+
+### Parties sauvegardées
+
+Les mini-jeux et les arènes se jouent d'une traite, dans un monde neuf à chaque fois. Les modes **sans fin** (Survie, Créatif, SMP, PvP Faction) gardent leur monde :
+
+- chaque « + » y crée une **nouvelle partie**, sauvegardée toute seule (« SMP 1 », « SMP 2 »...) ;
+- à côté du « + », la **disquette** ouvre la liste des parties que l'on a créées dans ce mode, la plus récente d'abord : **Reprendre** la relance là où on l'avait laissée, publique ou privée selon l'interrupteur ;
+- **Supprimer** efface la partie et son monde ; il faut cliquer une seconde fois pour confirmer.
+
+Il n'y a rien à faire pour sauvegarder. Les parties sont des dossiers de `saves` ; le monde de survie d'avant cette version y figure sous le nom « Survie (monde d'origine) ».
 
 ### Amis
 

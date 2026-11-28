@@ -30,6 +30,7 @@ mod mods;
 mod net;
 mod pixels;
 mod prof;
+mod saves;
 mod settings;
 mod skin;
 mod skinlib;
@@ -207,6 +208,10 @@ struct Remote {
     slot: usize,
     /// Orientation de son buste : elle suit son regard avec un temps de retard.
     body_yaw: f32,
+    /// Son trajet entre deux positions recues, et le regard vers lequel il tourne.
+    glide: Glide,
+    yaw_goal: f32,
+    pitch_goal: f32,
     /// Objet tenu (0 = rien), et gestes en cours : coup de bras, bouclier leve, arc tendu, accroupi.
     held: u16,
     swing: f32,
@@ -232,6 +237,9 @@ struct MobView {
     /// Temps restant du flash rouge apres un coup.
     hurt: f32,
     walk: f32,
+    /// Son trajet entre deux positions recues, et l'orientation vers laquelle elle tourne.
+    glide: Glide,
+    yaw_goal: f32,
     /// Secondes avant son prochain cri.
     voice: f32,
     /// Positions passees de la tete : le corps du Wyrm les suit.
@@ -429,6 +437,47 @@ struct Person {
     gear: [u16; 4],
     hurt: bool,
     breath: f32,
+}
+
+/// Le mouvement d'une entite dont le serveur donne la position vingt fois par seconde, a intervalles
+/// pas tout a fait reguliers. Plutot que de courir apres chaque position recue (ce qui donne des a-coups),
+/// on estime sa vitesse, on prolonge sa course entre deux nouvelles, et l'image la suit en douceur.
+#[derive(Clone, Copy)]
+struct Glide {
+    /// Derniere position recue, vitesse estimee, temps ecoule depuis.
+    last: Vec3,
+    vel: Vec3,
+    since: f32,
+    known: bool,
+}
+
+impl Glide {
+    fn new() -> Glide {
+        Glide { last: Vec3::ZERO, vel: Vec3::ZERO, since: 0.0, known: false }
+    }
+
+    /// Une nouvelle position arrive. `jump` : l'entite vient d'etre deplacee d'un coup (teleportation).
+    fn aim(&mut self, p: Vec3, jump: bool) {
+        if !self.known || jump {
+            self.vel = Vec3::ZERO;
+        } else {
+            let seen = (p - self.last) / self.since.clamp(0.03, 0.3);
+            self.vel = self.vel * 0.75 + seen * 0.25;
+        }
+        (self.last, self.since, self.known) = (p, 0.0, true);
+    }
+
+    /// Avance d'une image : rend la nouvelle place a montrer, a partir de celle qui l'etait.
+    fn step(&mut self, dt: f32, shown: Vec3) -> Vec3 {
+        self.since += dt;
+        // Sans nouvelles depuis un moment, l'entite s'est arretee : on ne prolonge plus sa course.
+        let trust = if self.since < 0.16 { 1.0 } else { (1.0 - (self.since - 0.16) / 0.1).max(0.0) };
+        if trust == 0.0 {
+            self.vel = Vec3::ZERO;
+        }
+        let ahead = self.last + self.vel * trust * self.since.min(0.2);
+        shown + (ahead - shown) * (1.0 - (-dt * 5.0).exp())
+    }
 }
 
 /// Ramene un angle entre -pi et pi.
@@ -702,6 +751,7 @@ pub struct App {
     /// Vitesse qu'aura le corps a la fin de l'image en cours (il se deplace a sa vitesse moyenne).
     vel_end: Vec3,
     leap: Option<Vec3>,
+    pace: Vec<f32>,
     leap_top: f32,
     /// Vue : 0 a la premiere personne, 1 de dos, 2 de face.
     cam: u8,
@@ -881,6 +931,7 @@ impl App {
             jump_cd: 0.0,
             vel_end: Vec3::ZERO,
             leap: None,
+            pace: Vec::new(),
             leap_top: 0.0,
             cam: 0,
             body_yaw: 0.0,
@@ -1070,17 +1121,18 @@ impl App {
                     if slot != skin::DEFAULT {
                         self.skin_out.push((slot, skin::default_skin()));
                     }
-                    self.others.insert(id, Remote { name, target: Vec3::ZERO, shown: Vec3::ZERO, yaw: 0.0, walk: 0.0, gear: [0; 4], talk: 0.0, hurt: 0.0, slot, body_yaw: 0.0, held: 0, swing: 0.0, guard: false, aim: false, sneak: false, sneak_k: 0.0, air_k: 0.0, speed: 0.0, pitch: 0.0 });
+                    self.others.insert(id, Remote { name, target: Vec3::ZERO, shown: Vec3::ZERO, yaw: 0.0, walk: 0.0, gear: [0; 4], talk: 0.0, hurt: 0.0, slot, body_yaw: 0.0, glide: Glide::new(), yaw_goal: 0.0, pitch_goal: 0.0, held: 0, swing: 0.0, guard: false, aim: false, sneak: false, sneak_k: 0.0, air_k: 0.0, speed: 0.0, pitch: 0.0 });
                 }
                 ServerMsg::PlayerPos { id, pos, yaw, pitch } => {
                     let p = self.loc(pos);
                     if let Some(r) = self.others.get_mut(&id) {
-                        r.pitch = pitch as f32;
-                        if r.shown == Vec3::ZERO || r.shown.distance(p) > 8.0 {
-                            r.shown = p;
+                        // Premiere position, ou un grand saut (teleportation) : il y est aussitot.
+                        let jump = r.shown == Vec3::ZERO || r.shown.distance(p) > 8.0;
+                        if jump {
+                            (r.shown, r.yaw, r.pitch) = (p, yaw as f32, pitch as f32);
                         }
-                        r.target = p;
-                        r.yaw = yaw as f32;
+                        r.glide.aim(p, jump);
+                        (r.target, r.yaw_goal, r.pitch_goal) = (p, yaw as f32, pitch as f32);
                     }
                 }
                 ServerMsg::Voice { id, data } => {
@@ -1218,16 +1270,17 @@ impl App {
                     let shown = old.as_ref().map(|m| m.shown).unwrap_or(p);
                     let trail = old.map(|m| m.trail).unwrap_or_default();
                     let voice = 3.0 + (id % 13) as f32;
-                    self.mobs.insert(id, MobView { kind, skin, target: p, shown, yaw, baby, hurt: 0.0, walk: 0.0, trail, voice });
+                    self.mobs.insert(id, MobView { kind, skin, target: p, shown, yaw, baby, hurt: 0.0, walk: 0.0, glide: Glide::new(), yaw_goal: yaw, trail, voice });
                 }
                 ServerMsg::MobPos { id, pos, yaw } => {
                     let p = self.loc(pos);
                     if let Some(m) = self.mobs.get_mut(&id) {
-                        m.target = p;
-                        if m.shown.distance(m.target) > 6.0 {
-                            m.shown = m.target;
+                        let jump = m.shown.distance(p) > 6.0;
+                        if jump {
+                            (m.shown, m.yaw) = (p, yaw as f32);
                         }
-                        m.yaw = yaw as f32;
+                        m.glide.aim(p, jump);
+                        (m.target, m.yaw_goal) = (p, yaw as f32);
                     }
                 }
                 ServerMsg::MobHurt { id } => {
@@ -1998,6 +2051,12 @@ impl App {
                 }
                 let (end_y, mid_y) = ease(self.vel.y, -78.4, 0.98f32.powf(ticks));
                 (self.vel.y, self.vel_end.y) = (mid_y, end_y);
+                // Pose au sol, on appuie assez pour le toucher a chaque image. Sans cela, quand les images
+                // se suivent de pres, la gravite d'une seule ne suffit pas : le corps decolle une image sur
+                // deux, et tremble.
+                if self.on_ground && self.vel.y <= 0.0 {
+                    self.vel.y = self.vel.y.min(-0.005 / dt.max(1e-4));
+                }
             }
         }
         if self.mode == shared::rules::SPECTATOR {
@@ -2025,7 +2084,11 @@ impl App {
                     let from = *self.leap.get_or_insert(before);
                     self.leap_top = self.leap_top.max(self.pos.y - from.y);
                 } else if let Some(from) = self.leap.take() {
-                    println!("saut : {:.3} bloc de haut, {:.2} de long", self.leap_top, Vec3::new(self.pos.x - from.x, 0.0, self.pos.z - from.z).length());
+                    if self.leap_top < 0.01 {
+                        println!("decollage sans saut : le corps a quitte le sol une image");
+                    } else {
+                        println!("saut : {:.3} bloc de haut, {:.2} de long", self.leap_top, Vec3::new(self.pos.x - from.x, 0.0, self.pos.z - from.z).length());
+                    }
                     self.leap_top = 0.0;
                 }
             }
@@ -2271,8 +2334,22 @@ impl App {
         }
         for r in self.others.values_mut() {
             let before = r.shown;
-            r.shown = r.shown.lerp(r.target, (dt * 12.0).min(1.0));
+            r.shown = r.glide.step(dt, r.shown);
+            // Le regard tourne en douceur vers sa nouvelle direction.
+            r.yaw += wrap(r.yaw_goal - r.yaw) * (dt * 16.0).min(1.0);
+            r.pitch += (r.pitch_goal - r.pitch) * (dt * 16.0).min(1.0);
             let step = Vec3::new(r.shown.x - before.x, 0.0, r.shown.z - before.z).length();
+            // Aide au developpement : EPICUBE_MESURE=1 ecrit la regularite de la vitesse des autres joueurs.
+            if std::env::var_os("EPICUBE_MESURE").is_some() && step / dt.max(1e-4) > 1.0 {
+                self.pace.push(step / dt.max(1e-4));
+                if self.pace.len() >= 240 {
+                    let n = self.pace.len() as f32;
+                    let mean = self.pace.iter().sum::<f32>() / n;
+                    let dev = (self.pace.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n).sqrt();
+                    println!("allure vue : {mean:.2} blocs/s, ecart {:.0} %", dev / mean * 100.0);
+                    self.pace.clear();
+                }
+            }
             r.walk += step * 2.2;
             r.hurt = (r.hurt - dt).max(0.0);
             // L'allure et la posture se lisent dans le mouvement : vite, en l'air, accroupi.
@@ -2290,7 +2367,8 @@ impl App {
         }
         for m in self.mobs.values_mut() {
             let before = m.shown;
-            m.shown = m.shown.lerp(m.target, (dt * 14.0).min(1.0));
+            m.shown = m.glide.step(dt, m.shown);
+            m.yaw += wrap(m.yaw_goal - m.yaw) * (dt * 12.0).min(1.0);
             m.walk += Vec3::new(m.shown.x - before.x, 0.0, m.shown.z - before.z).length() * 3.0;
             m.hurt = (m.hurt - dt).max(0.0);
             if m.kind == mk::WYRM && m.trail.first().is_none_or(|t| t.distance(m.shown) > 1.7) {
@@ -2712,6 +2790,9 @@ pub struct Shell {
     pub library: Option<library::Library>,
     /// L'editeur de skin, quand il est ouvert.
     pub skin: Option<skin::Editor>,
+    /// La liste des parties sauvegardees est ouverte (ecran Jouer), et celle qu'on s'apprete a supprimer.
+    pub saves_open: bool,
+    pub doomed: Option<String>,
     /// La bibliotheque de skins, quand son onglet est ouvert.
     pub shelf: Option<skinlib::Shelf>,
     /// L'annuaire des parties en ligne, quand l'ecran Multijoueur est ouvert.
@@ -2942,11 +3023,11 @@ impl Shell {
             "" => format!("Partie de {who}"),
             n => n.to_string(),
         };
-        // Chaque mode qui garde son monde a le sien : « monde » pour la survie, le nom du mode pour les autres.
-        let world = match self.host.world.trim() {
-            "" if mode.id == "survie" => "monde".to_string(),
-            "" => mode.id.clone(),
-            w => w.to_string(),
+        // Dans un mode sans fin, la partie garde son monde : on reprend celle que l'on a choisie, ou l'on
+        // en cree une neuve, qui se retrouvera sous la disquette de l'ecran Jouer.
+        let (world, saved_name) = match self.host.world.trim() {
+            "" => saves::fresh(&mode.id, &mode.name),
+            w => (w.to_string(), w.to_string()),
         };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         // Mondes de parties sans lendemain restes d'une session interrompue : on fait place nette.
@@ -2988,6 +3069,10 @@ impl Shell {
                 let addr = format!("127.0.0.1:{}", h.port);
                 self.local = Some(h);
                 self.party = Some((self.host.visibility, mode.name.clone()));
+                if mode.keep_world {
+                    // La partie est sauvegardee toute seule ; on note qu'on y joue.
+                    saves::touch(&world, &mode.id, &saved_name);
+                }
                 self.party_dir = (!mode.keep_world).then_some(dir);
                 self.browser = None;
                 self.connect(&addr);
@@ -3540,6 +3625,8 @@ fn main() {
         library: None,
         skin: None,
         shelf: None,
+        saves_open: false,
+        doomed: None,
         browser: None,
         modes: Vec::new(),
         friends: friends::Friends::new(None),
@@ -3568,18 +3655,22 @@ fn main() {
             Some(pick) => {
                 // « --prive » : reservee aux amis ; « --seul » : personne d'autre ne la voit.
                 (shell.host.pick, shell.host.visibility) = (pick, if flag("--seul") { 2 } else if flag("--prive") { 1 } else { 0 });
-                if let Some(world) = arg("--world") {
-                    shell.host.world = world;
-                }
+                // Sans « --world », on reprend le monde d'origine du mode : « monde » pour la survie.
+                shell.host.world = arg("--world").unwrap_or_else(|| if mode == "survie" { "monde".to_string() } else { mode.clone() });
                 shell.host_party();
             }
             None => eprintln!("Mode de jeu inconnu : {mode}"),
         }
-    } else if flag("--solo") || demo.as_deref().is_some_and(|d| !matches!(d, "parametres" | "controles" | "skin" | "skins" | "multijoueur" | "prive" | "amis" | "heberger" | "pause-partie")) {
+    } else if flag("--solo") || demo.as_deref().is_some_and(|d| !matches!(d, "parametres" | "controles" | "skin" | "skins" | "multijoueur" | "sauvegardes" | "prive" | "amis" | "heberger" | "pause-partie")) {
         shell.start_solo();
     }
     match demo.as_deref() {
         Some("multijoueur") => shell.open_multi(),
+        // L'ecran Jouer, la liste des parties sauvegardees ouverte.
+        Some("sauvegardes") => {
+            shell.open_multi();
+            shell.saves_open = true;
+        }
         // L'ecran Jouer, l'interrupteur sur « privee ».
         Some("prive") => {
             shell.open_multi();
@@ -3629,6 +3720,7 @@ fn main() {
     let mut input = Input::default();
     let mut grabbed = false;
     let mut last = Instant::now();
+    let mut frame_dt = 1.0f32 / 60.0;
     let bench: Option<f32> = std::env::var("EPICUBE_BENCH").ok().and_then(|v| v.parse().ok());
     let (started, mut bench_last, mut bench_frames) = (Instant::now(), Instant::now(), Vec::<f32>::new());
 
@@ -3709,7 +3801,11 @@ fn main() {
                     }
                     WindowEvent::RedrawRequested => {
                         let now = Instant::now();
-                        let dt = (now - last).as_secs_f32().min(0.05);
+                        // Le temps mesure entre deux images tremble de quelques millisecondes alors que l'ecran,
+                        // lui, les montre a intervalles reguliers : on le lisse, sinon le decor tressaute.
+                        let raw = (now - last).as_secs_f32().min(0.05);
+                        frame_dt = if (raw - frame_dt).abs() > 0.012 { raw } else { frame_dt * 0.85 + raw * 0.15 };
+                        let dt = frame_dt;
                         last = now;
                         if (!gestes.is_empty() || !lines.is_empty()) && shell.game.as_ref().is_some_and(|g| g.joined) {
                             use controls::Act;
