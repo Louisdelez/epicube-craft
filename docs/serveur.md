@@ -2,23 +2,27 @@
 
 Le jeu fonctionne toujours avec un serveur, qui fait autorité sur le monde, les inventaires et la survie. En solo, ce serveur tourne à l'intérieur du jeu ; à plusieurs, les joueurs se connectent à une partie ouverte ou à un serveur dédié.
 
-## Jouer à plusieurs
+## Jouer
 
-Tout passe par l'écran **Multijoueur**. À gauche : la recherche, les modes de jeu avec leur nombre de parties, les amis et le bouton pour héberger. À droite : toutes les parties en ligne, qu'elles tournent dans un centre de données, sur un NAS ou dans le jeu d'un joueur.
+À l'écran titre, **Jouer** ouvre la liste des modes de jeu. Il n'y a pas de solo d'un côté et de multijoueur de l'autre : on choisit un mode, puis on rejoint une partie ou l'on crée la sienne.
 
-- **Rejoindre** une partie de la liste. On cherche par nom, mode de jeu, étiquette ou pseudo de l'hôte.
-- **Jouer : (un mode)** : choisir un mode à gauche, puis ce bouton. Le jeu rejoint une partie de ce mode qui a de la place ; s'il n'y en a pas, il en héberge une, publique, et l'on attend les autres.
-- **Héberger une partie** : choisir le mode de jeu, le nom, le nombre de places, et **publique** ou **privée**. La partie tourne dans le jeu de celui qui l'héberge, et s'arrête quand il la quitte.
+- **À gauche**, les modes de jeu (Survie, Créatif, UHC, Bed Wars, et ceux qu'apportent les mods), avec leur nombre de parties en ligne et une recherche.
+- **À droite**, les parties du mode choisi, qu'elles tournent dans un centre de données, sur un NAS ou dans le jeu d'un joueur, avec une recherche par nom, étiquette ou pseudo de l'hôte. Chaque partie montre son ping : quatre barres vertes et le temps de réponse en millisecondes. **Rejoindre** y entre.
+- **Le « + »**, en haut à droite, crée sa propre partie de ce mode : elle tourne dans le jeu de celui qui la crée, et s'arrête quand il la quitte.
 
 Il n'y a rien à régler : ni port à ouvrir, ni box à toucher. Une partie que l'on ne peut pas joindre directement (derrière une box, c'est presque toujours le cas) passe d'elle-même par le relais d'Epicube Hub.
 
-### Parties publiques et privées
+### Publique, privée ou solo
 
-Une partie **publique** est ouverte à tous. Une partie **privée** figure aussi dans la liste, avec un cadenas : seuls les **amis** de celui qui l'héberge peuvent y entrer.
+En créant une partie, on choisit qui peut y venir :
+
+- **Publique** : elle figure dans la liste, tout le monde peut la rejoindre.
+- **Privée** : elle figure dans la liste avec un cadenas ; seuls les **amis** de celui qui l'héberge peuvent y entrer.
+- **Solo** : personne d'autre ne la voit.
 
 ### Amis
 
-Les amis sont ceux du compte Epicube : la même liste que dans Epicube Hub. Dans **Multijoueur → Amis**, on demande quelqu'un par son pseudo, on accepte ou refuse les demandes, on retire un ami, on voit qui est en ligne et l'on s'écrit ; un message envoyé depuis le jeu se lit aussi dans le lanceur, et inversement. Il faut être connecté à son compte, donc avoir lancé le jeu depuis Epicube Hub.
+Les amis sont ceux du compte Epicube : la même liste que dans Epicube Hub. Leur barre se déplie à droite de tous les écrans (bouton **Amis**), et en pleine partie avec la touche `O` (elle se change dans **Paramètres → Contrôles**) ; `Échap` la replie. On y demande quelqu'un par son pseudo, on accepte ou refuse les demandes, on retire un ami, on voit qui est en ligne et l'on s'écrit ; un message envoyé depuis le jeu se lit aussi dans le lanceur, et inversement. Il faut être connecté à son compte, donc avoir lancé le jeu depuis Epicube Hub.
 
 ### Modes de jeu
 
@@ -77,7 +81,7 @@ epicube-craft [--solo] [--connect hote:port] [--name Pseudo] [--seed 1337] [--wo
 | `--name` | pseudo |
 | `--seed` | graine du monde à créer (chiffres ou texte) |
 | `--world` | nom du monde |
-| `--heberger mode` | héberge directement une partie de ce mode (`--prive` : privée, `--world` : son monde) |
+| `--heberger mode` | crée directement une partie de ce mode (`--prive` : privée, `--seul` : solo, `--world` : son monde) |
 | `--export-assets` | écrit textures et modèles dans le dossier `assets`, puis quitte |
 | `--item-sheet fichier.png` | écrit une planche de toutes les icônes d'objets, puis quitte |
 

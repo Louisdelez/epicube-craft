@@ -13,6 +13,7 @@ mod browser;
 mod chatbox;
 mod controls;
 mod font;
+mod friends;
 mod sounds;
 mod gfx;
 mod hud;
@@ -66,7 +67,7 @@ const REACH: f32 = 5.0;
 const CLOUD_Y: f32 = 250.0;
 const CLOUD_CELL: f32 = 12.0;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Input {
     keys: HashSet<KeyCode>,
     pressed: Vec<KeyCode>,
@@ -2110,8 +2111,6 @@ impl App {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Title,
-    /// Choix du monde et de sa graine.
-    Solo,
     /// Les parties en ligne.
     Multi,
     /// Reglages de la partie que l'on va heberger.
@@ -2149,11 +2148,13 @@ pub struct Shell {
     pub library: Option<library::Library>,
     /// L'annuaire des parties en ligne, quand l'ecran Multijoueur est ouvert.
     pub browser: Option<browser::Browser>,
+    /// Les amis du joueur ; leur barre s'ouvre sur tous les ecrans.
+    pub friends: friends::Friends,
     /// Modes de jeu que l'on peut heberger, et la partie que l'on prepare.
     pub modes: Vec<modes::Mode>,
     pub host: HostForm,
-    /// La partie que l'on heberge : est-elle publique, et le nom de son mode.
-    pub party: Option<(bool, String)>,
+    /// La partie que l'on heberge : qui peut la voir (comme `HostForm::visibility`), et le nom de son mode.
+    pub party: Option<(u8, String)>,
     /// Monde d'une partie sans lendemain (UHC, Bed Wars...), efface quand elle s'arrete.
     party_dir: Option<PathBuf>,
     /// Micro ouvert pour le chat vocal, erreur d'ouverture s'il y en a eu une, et test « s'entendre ».
@@ -2183,11 +2184,14 @@ pub struct HostForm {
     /// Rang du mode de jeu choisi dans `Shell::modes`.
     pub pick: usize,
     pub name: String,
-    pub public: bool,
+    /// 0 : publique, tout le monde la voit et y entre ; 1 : privee, reservee aux amis ;
+    /// 2 : solo, personne d'autre ne la voit.
+    pub visibility: u8,
     /// Places ; 0 : celles que propose le mode.
     pub places: u16,
-    /// Monde, pour les modes qui le gardent d'une partie a l'autre.
+    /// Monde, pour les modes qui le gardent d'une partie a l'autre, et graine d'un monde neuf.
     pub world: String,
+    pub seed: String,
 }
 
 /// Construit textures et modeles, puis applique le dossier de ressources s'il existe.
@@ -2334,7 +2338,8 @@ impl Shell {
         self.host.pick = self.host.pick.min(self.modes.len().saturating_sub(1));
         self.browser = Some(browser::Browser::open(self.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone())));
         self.screen = Screen::Multi;
-        self.field = 1;
+        // La recherche des parties recoit la saisie ; un clic (ou Tab) la donne a celle des modes.
+        self.field = 2;
     }
 
     /// Heberge une partie du mode choisi : le serveur tourne dans le jeu, s'inscrit a l'annuaire
@@ -2358,7 +2363,8 @@ impl Shell {
         let note = dir.join("graine.txt");
         if !dir.join("monde.bin").exists() && !note.exists() {
             let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(&note, shared::seed::random().to_string());
+            let n = shared::seed::parse(&self.host.seed).unwrap_or_else(shared::seed::random);
+            let _ = std::fs::write(&note, n.to_string());
             let _ = std::fs::write(dir.join("regles.txt"), mode.rules.to_text());
         }
         let label = std::fs::read_to_string(&note).ok().map(|t| t.trim().to_string());
@@ -2375,11 +2381,12 @@ impl Shell {
             tags: mode.tags.clone(),
             max_players: if self.host.places == 0 { mode.players } else { self.host.places },
             // Une partie privee figure dans Multijoueur avec un cadenas : seuls les amis de l'hote y entrent.
-            private: !self.host.public,
+            private: self.host.visibility == 1,
             host: Some(self.account.as_ref().map_or_else(|| shared::account::offline_id(&shared::account::clean_name(&who)), |a| a.id)),
             token: self.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone()),
             host_name: who,
-            hub: server::party::hub(),
+            // Une partie solo ne s'annonce nulle part.
+            hub: if self.host.visibility == 2 { String::new() } else { server::party::hub() },
             relay: None,
         };
         let started = std::net::TcpListener::bind("0.0.0.0:0").and_then(|l| server::start_party(l, seed, Some(dir.clone()), server::accounts::Accounts::local(), packs, party));
@@ -2387,7 +2394,7 @@ impl Shell {
             Ok(h) => {
                 let addr = format!("127.0.0.1:{}", h.port);
                 self.local = Some(h);
-                self.party = Some((self.host.public, mode.name.clone()));
+                self.party = Some((self.host.visibility, mode.name.clone()));
                 self.party_dir = (!mode.keep_world).then_some(dir);
                 self.browser = None;
                 self.connect(&addr);
@@ -2402,18 +2409,21 @@ impl Shell {
     /// Etat de la partie hebergee, pour l'ecran de pause.
     pub fn party_lines(&self) -> Option<Vec<String>> {
         use std::sync::atomic::Ordering;
-        let (public, mode) = self.party.as_ref()?;
+        let (visibility, mode) = self.party.as_ref()?;
         let st = &self.local.as_ref()?.status;
         let players = st.players.load(Ordering::Relaxed);
-        let mut lines = vec![format!("{mode} - {players} joueur{}", if players > 1 { "s" } else { "" })];
-        lines.push(match (st.error(), st.listed.load(Ordering::Relaxed)) {
-            (Some(e), _) => format!("Pas encore en ligne : {e}. Nouvel essai..."),
-            (None, false) => "Mise en ligne...".to_string(),
-            (None, true) if st.relayed.load(Ordering::Relaxed) || st.reachable.load(Ordering::Relaxed) => {
-                if *public { "Partie publique : tout le monde peut la rejoindre.".to_string() } else { "Partie privée : seuls vos amis peuvent la rejoindre.".to_string() }
-            }
-            (None, true) => "Mise en relation avec le relais...".to_string(),
-        });
+        // Une partie solo n'a rien a dire ; une partie en ligne, sa mise en ligne tant qu'elle n'y est pas.
+        if *visibility == 2 {
+            return None;
+        }
+        let who = if *visibility == 0 { "publique" } else { "privée" };
+        let mut lines = vec![format!("{mode} {who} - {players} joueur{}", if players > 1 { "s" } else { "" })];
+        match (st.error(), st.listed.load(Ordering::Relaxed)) {
+            (Some(e), _) => lines.push(format!("Pas encore en ligne : {e}")),
+            (None, false) => lines.push("Mise en ligne...".to_string()),
+            (None, true) if st.relayed.load(Ordering::Relaxed) || st.reachable.load(Ordering::Relaxed) => {}
+            (None, true) => lines.push("Mise en ligne...".to_string()),
+        }
         Some(lines)
     }
 
@@ -2430,34 +2440,11 @@ impl Shell {
     fn act(&mut self, action: Action, gfx: &mut Gfx) {
         match action {
             Action::None => {}
-            Action::Solo => self.start_solo(),
             Action::Host => self.host_party(),
             Action::JoinAt(addr) => {
                 shared::mods::clear_content();
                 self.browser = None;
                 self.connect(&addr);
-            }
-            Action::Play(mode) => {
-                // Comme dans les jeux a salons : on rejoint une partie de ce mode s'il y en a une avec de la
-                // place ; sinon on en heberge une, publique, et l'on attend les autres.
-                let found = self.browser.as_ref().and_then(|b| b.best(&mode));
-                match (found, self.modes.iter().position(|m| m.id == mode)) {
-                    (Some(s), _) => {
-                        shared::mods::clear_content();
-                        self.browser = None;
-                        self.connect(&s.address);
-                    }
-                    (None, Some(pick)) => {
-                        (self.host.pick, self.host.public, self.host.places) = (pick, true, 0);
-                        self.host.name.clear();
-                        self.host_party();
-                    }
-                    (None, None) => {
-                        if let Some(b) = self.browser.as_mut() {
-                            b.note = Some("Aucune partie de ce mode n'a de place, et ce mode n'est pas installé chez vous.".into());
-                        }
-                    }
-                }
             }
             Action::Quit => self.quit = true,
             Action::Leave => self.leave(gfx),
@@ -2511,6 +2498,33 @@ impl Shell {
             self.applied = self.settings.clone();
         }
 
+        // Les amis : reponses du Hub, et Echap qui replie leur barre avant toute autre chose.
+        self.friends.poll();
+        let closing = self.friends.open && inp.pressed.contains(&KeyCode::Escape);
+        if closing {
+            self.friends.open = false;
+        }
+        // Barre des amis ouverte : le clavier lui appartient, et les clics qui tombent dessus aussi.
+        let quiet;
+        let inp = if self.friends.open || closing {
+            let mut q = inp.clone();
+            q.text.clear();
+            q.backspace = 0;
+            q.pressed.clear();
+            q.typed.clear();
+            q.keys.clear();
+            let width = menu::FRIENDS_W * self.settings.scale(gfx.size().1);
+            if inp.mouse.0 >= gfx.size().0 - width {
+                (q.lmb, q.rmb, q.lmb_click, q.rmb_click, q.scroll) = (false, false, false, false, 0.0);
+            }
+            quiet = (q, inp.clone());
+            &quiet.0
+        } else {
+            quiet = (Input::default(), Input::default());
+            inp
+        };
+        // Les touches telles que le joueur les a vraiment enfoncees, pour la barre des amis.
+        let raw = if self.friends.open || closing { &quiet.1 } else { inp };
         // Les touches apprennent la lettre qu'elles portent sur ce clavier.
         for (code, label) in &inp.typed {
             self.settings.controls.learn(*code, label);
@@ -2523,7 +2537,7 @@ impl Shell {
             self.screen = match self.screen {
                 Screen::Pause => Screen::Game,
                 Screen::PauseSettings => Screen::Pause,
-                Screen::Settings | Screen::Multi | Screen::Solo => Screen::Title,
+                Screen::Settings | Screen::Multi => Screen::Title,
                 Screen::Host => Screen::Multi,
                 s => s,
             };
@@ -2533,8 +2547,12 @@ impl Shell {
             self.library = None;
             self.field = 0;
         }
-        if inp.pressed.contains(&KeyCode::Tab) && matches!(self.screen, Screen::Multi | Screen::Solo | Screen::Host) {
-            self.field = if self.field == 1 { 2 } else { 1 };
+        if inp.pressed.contains(&KeyCode::Tab) {
+            match self.screen {
+                Screen::Host => self.field = self.field % 3 + 1,
+                Screen::Multi => self.field = if self.field == 1 { 2 } else { 1 },
+                _ => {}
+            }
         }
 
         // Refuse avant d'etre entre : on revient au menu, qui affiche le motif.
@@ -2566,6 +2584,14 @@ impl Shell {
             self.screen = Screen::Pause;
         }
         let action = if self.screen != Screen::Game { menu::draw(self, &mut ui, inp, s) } else { Action::None };
+        // La barre des amis, par-dessus tout, sur tous les ecrans. En partie, sa touche la deplie.
+        let playing = self.screen == Screen::Game && self.game.as_ref().is_some_and(|g| g.joined && !g.chat.open);
+        let friends_key = self.settings.controls.key(controls::Act::Friends);
+        if playing && !self.friends.open && !closing && raw.pressed.contains(&friends_key) {
+            self.friends.toggle();
+        } else {
+            menu::draw_friends(&mut self.friends, &mut ui, raw, s, self.t, !grabbed);
+        }
         prof::mark("rendu");
         match &out {
             Some(o) => {
@@ -2590,7 +2616,7 @@ impl Shell {
 
     /// La souris doit-elle etre capturee ?
     fn want_grab(&self) -> bool {
-        !self.showcase && self.screen == Screen::Game && self.game.as_ref().is_some_and(|g| g.want_grab())
+        !self.showcase && !self.friends.open && self.screen == Screen::Game && self.game.as_ref().is_some_and(|g| g.want_grab())
     }
 }
 
@@ -2901,7 +2927,8 @@ fn main() {
         library: None,
         browser: None,
         modes: Vec::new(),
-        host: HostForm { pick: 0, name: String::new(), public: true, places: 0, world: "monde".to_string() },
+        friends: friends::Friends::new(None),
+        host: HostForm { pick: 0, name: String::new(), visibility: 0, places: 0, world: "monde".to_string(), seed: String::new() },
         party: None,
         party_dir: None,
     };
@@ -2911,7 +2938,9 @@ fn main() {
     }
 
     // Les amis du joueur le voient « en jeu » tant que le jeu tourne.
-    browser::start_presence(shell.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone()));
+    let token = shell.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone());
+    friends::start_presence(token.clone());
+    shell.friends = friends::Friends::new(token);
     // Demarrage direct, sans passer par le menu.
     let demo = std::env::var("EPICUBE_DEMO").ok();
     if let Some(a) = arg("--connect") {
@@ -2922,7 +2951,8 @@ fn main() {
         shell.modes = modes::available();
         match shell.modes.iter().position(|m| m.id == mode) {
             Some(pick) => {
-                (shell.host.pick, shell.host.public) = (pick, !flag("--prive"));
+                // « --prive » : reservee aux amis ; « --seul » : personne d'autre ne la voit.
+                (shell.host.pick, shell.host.visibility) = (pick, if flag("--seul") { 2 } else if flag("--prive") { 1 } else { 0 });
                 if let Some(world) = arg("--world") {
                     shell.host.world = world;
                 }
@@ -2936,10 +2966,11 @@ fn main() {
     match demo.as_deref() {
         Some("multijoueur") => shell.open_multi(),
         Some("amis") => {
-            shell.open_multi();
-            if let Some(b) = shell.browser.as_mut() {
-                b.toggle_friends();
+            // La barre des amis, depliee : sur l'ecran Jouer, ou en partie si l'on en heberge une.
+            if shell.game.is_none() {
+                shell.open_multi();
             }
+            shell.friends.open = true;
         }
         Some("heberger") => {
             shell.open_multi();

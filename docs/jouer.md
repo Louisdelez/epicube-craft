@@ -4,8 +4,7 @@
 
 À l'écran titre :
 
-- **Jouer en solo** : choisissez un nom de monde et, si vous le souhaitez, une graine (des chiffres ou un texte). La même graine redonne le même monde. Un monde déjà créé garde sa graine et ses règles.
-- **Multijoueur** : toutes les parties en ligne, la recherche, les amis, et le bouton pour héberger la vôtre (voir [Multijoueur et serveur](serveur.md)).
+- **Jouer** : la liste des modes de jeu ; pour chacun, les parties à rejoindre et un « + » pour créer la sienne, publique, privée ou solo (voir [Jouer et serveurs](serveur.md)).
 - **Paramètres** : affichage, son, micro, performances.
 
 À la création d'un monde, vous réglez aussi le [mode de jeu](#modes-de-jeu), la [difficulté](#difficultés) et la **triche** (le droit de changer de mode et d'utiliser les commandes qui modifient la partie).

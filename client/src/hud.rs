@@ -302,7 +302,6 @@ impl App {
             let [rx, ry, rw, rh] = l.rpanel;
             ui.bevel(rx, ry, rw, rh, s, PANEL, PANEL_LIGHT, PANEL_DARK);
             ui.text(rx + 6.0 * s, ry + 6.0 * s, s, "Tous les objets", [1.0, 0.9, 0.6, 1.0]);
-            ui.text(rx + 6.0 * s, ry + rh - 11.0 * s, s, "Molette : défiler", [0.7, 0.72, 0.8, 1.0]);
             for (id, x, y) in &l.palette {
                 let hover = inside(inp.mouse, *x, *y, cell);
                 slot(ui, x + s, y + s, cell - 2.0 * s, s, hover);

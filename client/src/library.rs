@@ -157,7 +157,7 @@ impl Library {
                     self.busy = None;
                     self.installed = scan();
                     self.note = Some(match result {
-                        Ok(()) => format!("« {id} » est installé : il s'applique à vos parties solo."),
+                        Ok(()) => format!("« {id} » est installé."),
                         Err(e) => format!("« {id} » n'a pas pu être installé : {e}"),
                     });
                 }

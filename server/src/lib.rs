@@ -908,6 +908,13 @@ impl Server {
     }
 
     fn on_msg(&mut self, id: u32, msg: ClientMsg) {
+        // Le ping se mesure aussi depuis la liste des parties, sans etre entre.
+        if let ClientMsg::Ping { t } = msg {
+            if let Some(c) = self.clients.get(&id) {
+                c.send(ServerMsg::Pong { t, tps: self.tps, mspt: self.mspt });
+            }
+            return;
+        }
         // Avant d'etre admis, un joueur ne peut que se presenter ; apres, il ne se presente plus.
         let greeting = matches!(msg, ClientMsg::Hello { .. } | ClientMsg::Proof { .. } | ClientMsg::ModWant { .. } | ClientMsg::ModsReady);
         if greeting == self.clients.get(&id).is_some_and(|c| c.ready) {
@@ -1019,11 +1026,7 @@ impl Server {
             ClientMsg::Shoot { charge } => self.shoot(id, charge),
             ClientMsg::Trade { index } => self.trade(id, index),
             ClientMsg::Rebase => self.resync(id),
-            ClientMsg::Ping { t } => {
-                if let Some(c) = self.clients.get(&id) {
-                    c.send(ServerMsg::Pong { t, tps: self.tps, mspt: self.mspt });
-                }
-            }
+            ClientMsg::Ping { .. } => {}
             ClientMsg::Glide(on) => {
                 if let Some(c) = self.clients.get_mut(&id) {
                     c.gliding = on && c.inv.iter().chain(c.armor.iter()).flatten().any(|st| st.id == items::HAGOROMO);
@@ -2708,6 +2711,16 @@ mod tests {
             .expect("le serveur repond aussitot");
         assert_eq!(t, 123_456, "l'horodatage revient tel quel");
         assert!(tps > 0.0 && tps <= 40.0 && mspt >= 0.0);
+    }
+
+    #[test]
+    fn ping_is_answered_before_entering() {
+        // La liste des parties mesure le ping sans se presenter.
+        let mut srv = Server::new(7, None);
+        let (tx, rx) = mpsc::channel();
+        srv.clients.insert(1, Client::new(tx, [0.5, 200.0, 0.5]));
+        srv.on_msg(1, ClientMsg::Ping { t: 9 });
+        assert!(rx.try_iter().any(|m| matches!(m, ServerMsg::Pong { t: 9, .. })));
     }
 
     #[test]

@@ -11,7 +11,6 @@ const GREY: [f32; 4] = [0.72, 0.74, 0.8, 1.0];
 #[derive(PartialEq)]
 pub enum Action {
     None,
-    Solo,
     Quit,
     /// Quitter la partie et revenir a l'ecran-titre.
     Leave,
@@ -21,8 +20,6 @@ pub enum Action {
     Host,
     /// Rejoindre la partie a cette adresse.
     JoinAt(String),
-    /// Jouer a ce mode : rejoindre une partie qui a de la place, ou en heberger une.
-    Play(String),
 }
 
 struct W<'a> {
@@ -171,15 +168,8 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
     match sh.screen {
         Screen::Title => {
             title(&mut wd, "EPICUBE CRAFT", (h * 0.16).floor(), 5.0 * s);
-            let sub = "Un monde de blocs à explorer";
-            wd.ui.text((w - Ui::text_width(sub, s)) / 2.0, (h * 0.16).floor() + 48.0 * s, s, sub, GREY);
             let mut y = (h * 0.44).floor();
-            if wd.button(x, y, bw, bh, "Jouer en solo") {
-                sh.screen = Screen::Solo;
-                sh.field = 1;
-            }
-            y += bh + gap;
-            if wd.button(x, y, bw, bh, "Multijoueur") {
+            if wd.button(x, y, bw, bh, "Jouer") {
                 sh.open_multi();
             }
             y += bh + gap;
@@ -197,70 +187,13 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 None => format!("Hors ligne : {}", sh.settings.name),
             };
             wd.ui.text(w - Ui::text_width(&who, s) - 4.0 * s, h - 12.0 * s, s, &who, GREY);
-            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.12", GREY);
-        }
-        Screen::Solo => {
-            title(&mut wd, "Monde", (h * 0.06).floor(), 3.0 * s);
-            let mut y = (h * 0.22).floor();
-            if wd.field(x, y, bw, bh, "Nom du monde", &sh.world, sh.field == 1, blink) {
-                sh.field = 1;
-            }
-            y += bh + 16.0 * s;
-            if wd.field(x, y, bw, bh, "Graine (chiffres ou texte, vide = au hasard)", &sh.seed_text, sh.field == 2, blink) {
-                sh.field = 2;
-            }
-            y += bh + 6.0 * s;
-            // Un monde deja cree garde sa graine : on le dit plutot que de laisser croire le contraire.
-            let exists = std::path::Path::new("saves").join(&sh.world).join("monde.bin").exists();
-            let hint = if exists { "Ce monde existe : il garde sa graine." } else { "Nouveau monde : la même graine redonne le même monde." };
-            wd.ui.text((w - Ui::text_width(hint, s)) / 2.0, y, s, hint, GREY);
-            y += 14.0 * s;
-            if !exists {
-                // Regles du nouveau monde : mode de jeu, difficulte, droit de changer de mode en cours de partie.
-                let extreme = sh.new_mode == 4;
-                let mode = if extreme { "Extrême (une seule vie)" } else { shared::rules::mode_name(sh.new_mode) };
-                if wd.button(x, y, bw, bh, &format!("Mode de jeu : {mode}")) {
-                    sh.new_mode = (sh.new_mode + 1) % 5;
-                }
-                y += bh + gap;
-                let diff = shared::rules::difficulty_name(if extreme { shared::rules::HARD } else { sh.new_difficulty });
-                if wd.button(x, y, bw, bh, &format!("Difficulté : {diff}")) && !extreme {
-                    sh.new_difficulty = (sh.new_difficulty + 1) % 4;
-                }
-                y += bh + gap;
-                let cheats = !extreme && sh.new_cheats;
-                if wd.button(x, y, bw, bh, &format!("Triche : {}", if cheats { "oui" } else { "non" })) && !extreme {
-                    sh.new_cheats = !sh.new_cheats;
-                }
-                y += bh + 4.0 * s;
-                let about = match sh.new_mode {
-                    0 => "Survie : récolter, fabriquer, manger, se défendre.",
-                    1 => "Créatif : tous les objets, vol libre, aucun danger.",
-                    2 => "Aventure : comme la survie, sans casser ni poser de blocs.",
-                    3 => "Spectateur : on traverse le monde sans y toucher.",
-                    _ => "Extrême : survie en difficile ; à la mort, on reste spectateur.",
-                };
-                wd.ui.text((w - Ui::text_width(about, s)) / 2.0, y, s, about, GREY);
-                y += 14.0 * s;
-            }
-            if wd.button(x, y, bw, bh, if exists { "Reprendre" } else { "Créer et jouer" }) && !sh.world.is_empty() {
-                action = Action::Solo;
-            }
-            y += bh + gap;
-            if wd.button(x, y, bw, bh, "Retour") {
-                sh.screen = Screen::Title;
-            }
-            match sh.field {
-                1 => type_into(&mut sh.world, inp, 24, name_char),
-                2 => type_into(&mut sh.seed_text, inp, 32, seed_char),
-                _ => {}
-            }
+            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.13", GREY);
         }
         Screen::Multi => {
-            title(&mut wd, "Multijoueur", (h * 0.03).floor(), 3.0 * s);
+            title(&mut wd, "Jouer", (h * 0.03).floor(), 3.0 * s);
             let Some(b) = sh.browser.as_mut() else { return action };
             b.poll();
-            // Une barre laterale a gauche (recherche, modes de jeu, hebergement), les parties a droite.
+            // A gauche les modes de jeu, a droite les parties du mode choisi.
             let (sw, mw, top) = (150.0 * s, 440.0 * s, (h * 0.03).floor() + 40.0 * s);
             let sx = ((w - sw - mw - 8.0 * s) / 2.0).floor();
             let mx = sx + sw + 8.0 * s;
@@ -268,24 +201,30 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             wd.ui.bevel(sx, top, sw, bottom - top, s, [0.07, 0.07, 0.1, 0.9], [0.04, 0.04, 0.06, 1.0], [0.3, 0.31, 0.38, 1.0]);
             wd.ui.bevel(mx, top, mw, bottom - top, s, [0.07, 0.07, 0.1, 0.9], [0.04, 0.04, 0.06, 1.0], [0.3, 0.31, 0.38, 1.0]);
             let (ix, iw) = (sx + 6.0 * s, sw - 12.0 * s);
-            let mut y = top + 16.0 * s;
-            if wd.field(ix, y, iw, bh, "Rechercher", &b.query, sh.field == 1, blink) {
-                sh.field = 1;
-            }
-            y += bh + 8.0 * s;
-            // Modes de jeu : ceux que l'on peut heberger, et ceux des parties en ligne.
+            // Les modes que l'on peut heberger, puis ceux que d'autres hebergent.
             let online = b.categories();
-            let mut chips: Vec<(String, String, usize)> = vec![(String::new(), "Toutes les parties".to_string(), online.iter().map(|c| c.2).sum())];
-            for m in &sh.modes {
-                chips.push((m.id.clone(), m.name.clone(), online.iter().find(|c| c.0 == m.id).map_or(0, |c| c.2)));
-            }
+            let mut modes: Vec<(String, String, usize)> = sh.modes.iter().map(|m| (m.id.clone(), m.name.clone(), online.iter().find(|c| c.0 == m.id).map_or(0, |c| c.2))).collect();
             for c in &online {
-                if !chips.iter().any(|k| k.0 == c.0) {
-                    chips.push(c.clone());
+                if !modes.iter().any(|k| k.0 == c.0) {
+                    modes.push(c.clone());
                 }
             }
-            let room = ((bottom - 78.0 * s - y) / (bh + 2.0 * s)).floor().max(1.0) as usize;
-            for (id, name, n) in chips.iter().take(room) {
+            if !modes.iter().any(|m| m.0 == b.mode) {
+                b.mode = modes.first().map(|m| m.0.clone()).unwrap_or_default();
+            }
+            // Recherche parmi les modes de jeu.
+            if wd.field(ix, top + 6.0 * s, iw, bh, "", &b.mode_query, sh.field == 1, blink) {
+                sh.field = 1;
+            }
+            if b.mode_query.is_empty() && sh.field != 1 {
+                wd.ui.text(ix + 5.0 * s, top + 12.0 * s, s, "Rechercher un mode", GREY);
+            }
+            let wanted = shared::commands::plain(b.mode_query.trim());
+            let picked_name = modes.iter().find(|c| c.0 == b.mode).map_or(String::new(), |c| c.1.clone());
+            modes.retain(|m| wanted.is_empty() || shared::commands::plain(&m.1).contains(&wanted));
+            let mut y = top + 12.0 * s + bh;
+            let room = ((bottom - 32.0 * s - y) / (bh + 2.0 * s)).floor().max(1.0) as usize;
+            for (id, name, n) in modes.iter().take(room) {
                 let picked = b.mode == *id;
                 let hot = wd.over(ix, y, iw, bh);
                 let fill = match (picked, hot) {
@@ -301,159 +240,33 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     crate::audio::play("clic", 0.6);
                     b.mode = id.clone();
                     b.page = 0;
-                    b.show_friends = false;
                 }
                 y += bh + 2.0 * s;
-            }
-            let amis = match (b.show_friends, b.waiting()) {
-                (true, _) => "Les parties".to_string(),
-                (false, 0) => "Amis".to_string(),
-                (false, n) => format!("Amis ({n})"),
-            };
-            if wd.button(ix, bottom - 74.0 * s, iw, bh, &amis) {
-                b.toggle_friends();
-                b.chat_with = None;
-            }
-            if wd.button(ix, bottom - 50.0 * s, iw, bh, "Héberger une partie") {
-                sh.screen = Screen::Host;
-                sh.field = 1;
-                return action;
             }
             if wd.button(ix, bottom - 26.0 * s, iw, bh, "Retour") {
                 sh.screen = Screen::Title;
                 sh.browser = None;
                 return action;
             }
+            // Les parties du mode choisi, publiques ou privees.
             let (lx, lw) = (mx + 6.0 * s, mw - 12.0 * s);
             let head = top + 6.0 * s;
-            if b.show_friends {
-                // Rubrique Amis : demander quelqu'un par son pseudo, repondre aux demandes, retirer un ami.
-                wd.ui.text(lx, head + 6.0 * s, s, "Amis", [1.0, 0.86, 0.36, 1.0]);
-                if !b.has_account() {
-                    let text = "Lancez le jeu depuis Epicube Hub, connecté à votre compte, pour avoir des amis.";
-                    wd.ui.text((mx + (mw - Ui::text_width(text, s)) / 2.0).floor(), head + 60.0 * s, s, text, GREY);
-                    return action;
-                }
-                let enter = inp.pressed.contains(&winit::keyboard::KeyCode::Enter) || inp.pressed.contains(&winit::keyboard::KeyCode::NumpadEnter);
-                if let Some(buddy) = b.chat_with.clone() {
-                    // Conversation avec un ami : les messages, et la saisie en bas.
-                    let status = match &b.friends {
-                        Some(Ok(f)) => f.friends.iter().find(|x| x.id == buddy.id).map_or(buddy.status.clone(), |x| x.status.clone()),
-                        _ => buddy.status.clone(),
-                    };
-                    if wd.button(lx + lw - 70.0 * s, head, 70.0 * s, bh, "Retour") {
-                        b.close_chat();
-                        return action;
-                    }
-                    wd.ui.text(lx + 34.0 * s, head + 6.0 * s, s, &format!("{} - {status}", buddy.name), WHITE);
-                    let iy = bottom - 26.0 * s;
-                    wd.field(lx, iy, lw - 86.0 * s, bh, "", &b.chat_input, true, blink);
-                    if wd.button(lx + lw - 80.0 * s, iy, 80.0 * s, bh, "Envoyer") || enter {
-                        b.send_chat();
-                    }
-                    type_into(&mut b.chat_input, inp, 200, seed_char);
-                    // Les derniers messages, du bas vers le haut ; les notres a droite.
-                    let mut y = iy - 8.0 * s;
-                    let top_limit = head + bh + 8.0 * s;
-                    if b.chat.is_empty() {
-                        wd.ui.text(lx, top_limit, s, "Aucun message pour le moment.", GREY);
-                    }
-                    'messages: for m in b.chat.iter().rev() {
-                        let lines = crate::chatbox::wrap(&m.body, s, lw * 0.7);
-                        let width = lines.iter().map(|l| Ui::text_width(l, s)).fold(0.0, f32::max) + 10.0 * s;
-                        let height = lines.len() as f32 * 10.0 * s + 6.0 * s;
-                        y -= height + 3.0 * s;
-                        if y < top_limit {
-                            break 'messages;
-                        }
-                        let x0 = if m.mine { lx + lw - width } else { lx };
-                        wd.ui.rect(x0, y, width, height, if m.mine { [0.72, 0.2, 0.165, 1.0] } else { [0.18, 0.18, 0.24, 1.0] });
-                        for (k, line) in lines.iter().enumerate() {
-                            wd.ui.text(x0 + 5.0 * s, y + 3.0 * s + k as f32 * 10.0 * s, s, line, WHITE);
-                        }
-                    }
-                    if let Some(note) = &b.note {
-                        wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), bottom + 6.0 * s, s, note, [1.0, 0.86, 0.36, 1.0]);
-                    }
-                    return action;
-                }
-                let fy = head + bh + 18.0 * s;
-                wd.field(lx, fy, 200.0 * s, bh, "Ajouter un ami : son pseudo", &b.friend_name, true, blink);
-                if wd.button(lx + 206.0 * s, fy, 80.0 * s, bh, "Demander") || enter {
-                    b.ask_friend();
-                }
-                type_into(&mut b.friend_name, inp, 16, name_char);
-                let mut y = fy + bh + 8.0 * s;
-                let friends = match &b.friends {
-                    None => {
-                        wd.ui.text(lx, y, s, "Chargement...", GREY);
-                        None
-                    }
-                    Some(Err(e)) => {
-                        wd.ui.text(lx, y, s, e, GREY);
-                        None
-                    }
-                    Some(Ok(f)) => Some(f.clone()),
-                };
-                if let Some(f) = friends {
-                    // (titre, comptes, bouton qui accepte, bouton qui retire)
-                    let groups: [(&str, &Vec<crate::browser::Buddy>, Option<&str>, &str); 3] =
-                        [("Demandes reçues", &f.received, Some("Accepter"), "Refuser"), ("Mes amis", &f.friends, None, "Retirer"), ("Demandes envoyées", &f.sent, None, "Annuler")];
-                    for (name, list, yes, no) in groups {
-                        if list.is_empty() && name != "Mes amis" {
-                            continue;
-                        }
-                        wd.ui.text(lx, y, s, &format!("{name} ({})", list.len()), [1.0, 0.86, 0.36, 1.0]);
-                        y += 12.0 * s;
-                        if list.is_empty() {
-                            wd.ui.text(lx + 6.0 * s, y + 2.0 * s, s, "Personne pour le moment.", GREY);
-                            y += 14.0 * s;
-                        }
-                        for buddy in list {
-                            if y + bh > bottom - 6.0 * s {
-                                break;
-                            }
-                            wd.ui.rect(lx, y, lw, bh, [0.12, 0.12, 0.16, 1.0]);
-                            if name == "Mes amis" {
-                                // Pastille (pleine : en ligne), pseudo, ce qu'il fait, messages non lus.
-                                let dot = if buddy.online { [0.4, 0.9, 0.5, 1.0] } else { [0.35, 0.36, 0.42, 1.0] };
-                                wd.ui.rect(lx + 6.0 * s, y + 8.0 * s, 4.0 * s, 4.0 * s, dot);
-                                wd.ui.text(lx + 16.0 * s, y + 6.0 * s, s, &buddy.name, WHITE);
-                                let nw = Ui::text_width(&buddy.name, s);
-                                wd.ui.text(lx + 24.0 * s + nw, y + 6.0 * s, s, &buddy.status, GREY);
-                                let write = if buddy.unread > 0 { format!("Écrire ({})", buddy.unread) } else { "Écrire".to_string() };
-                                if wd.button(lx + lw - 148.0 * s, y, 70.0 * s, bh, &write) {
-                                    b.open_chat(buddy);
-                                }
-                            } else {
-                                wd.ui.text(lx + 6.0 * s, y + 6.0 * s, s, &buddy.name, WHITE);
-                            }
-                            if let Some(yes) = yes {
-                                if wd.button(lx + lw - 148.0 * s, y, 70.0 * s, bh, yes) {
-                                    b.accept_friend(buddy);
-                                }
-                            }
-                            if wd.button(lx + lw - 74.0 * s, y, 70.0 * s, bh, no) {
-                                b.remove_friend(buddy);
-                            }
-                            y += bh + 2.0 * s;
-                        }
-                        y += 6.0 * s;
-                    }
-                }
-                if let Some(note) = &b.note {
-                    wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), bottom + 6.0 * s, s, note, [1.0, 0.86, 0.36, 1.0]);
-                }
-                return action;
-            }
-            // Les parties : nom, mode, etiquettes, joueurs.
             let rows = b.shown();
-            let picked_name = chips.iter().find(|c| c.0 == b.mode).map_or(String::new(), |c| c.1.clone());
-            let heading = if b.mode.is_empty() { format!("{} partie{} en ligne", rows.len(), if rows.len() > 1 { "s" } else { "" }) } else { format!("{picked_name} : {} partie{}", rows.len(), if rows.len() > 1 { "s" } else { "" }) };
-            wd.ui.text(lx, head + 6.0 * s, s, &heading, [1.0, 0.86, 0.36, 1.0]);
-            // Un mode retenu : on y joue d'un clic, dans une partie existante ou dans la sienne.
-            if !b.mode.is_empty() && wd.button(lx + lw - 130.0 * s, head, 130.0 * s, bh, &format!("Jouer : {picked_name}")) {
-                action = Action::Play(b.mode.clone());
+            wd.ui.text(lx, head + 6.0 * s, s, &format!("{picked_name} : {} partie{}", rows.len(), if rows.len() > 1 { "s" } else { "" }), [1.0, 0.86, 0.36, 1.0]);
+            // Recherche parmi les parties, puis le petit « + » : creer sa propre partie de ce mode.
+            if wd.field(lx + lw - 176.0 * s, head, 150.0 * s, bh, "", &b.query, sh.field == 2, blink) {
+                sh.field = 2;
+            }
+            if b.query.is_empty() && sh.field != 2 {
+                wd.ui.text(lx + lw - 171.0 * s, head + 6.0 * s, s, "Rechercher une partie", GREY);
+            }
+            let hostable = sh.modes.iter().position(|m| m.id == b.mode);
+            if hostable.is_some() && wd.button(lx + lw - bh, head, bh, bh, "+") {
+                sh.host.pick = hostable.unwrap_or(0);
+                sh.host.places = 0;
+                sh.screen = Screen::Host;
+                sh.field = 1;
+                return action;
             }
             let (y3, rh) = (head + bh + 6.0 * s, 26.0 * s);
             let per_page = (((bottom - 28.0 * s - y3) / (rh + 2.0 * s)).floor().max(1.0)) as usize;
@@ -461,8 +274,8 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             b.page = b.page.min(pages - 1);
             let state = match &b.list {
                 None => Some("Recherche des parties en ligne...".to_string()),
-                Some(Err(e)) => Some(format!("Parties indisponibles : {e}.")),
-                Some(Ok(_)) if rows.is_empty() => Some(if b.mode.is_empty() { "Aucune partie pour le moment. Hébergez la vôtre !".to_string() } else { format!("Aucune partie. « Jouer : {picked_name} » en lance une.") }),
+                Some(Err(e)) => Some(format!("Parties indisponibles : {e}. Le « + » crée la vôtre.")),
+                Some(Ok(_)) if rows.is_empty() => Some("Aucune partie pour le moment. Le « + » crée la vôtre.".to_string()),
                 _ => None,
             };
             if let Some(text) = state {
@@ -480,8 +293,6 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     lx + 6.0 * s
                 };
                 wd.ui.text(nx, y + 4.0 * s, s, &row.name, WHITE);
-                let nw = Ui::text_width(&row.name, s);
-                wd.ui.text(nx + 8.0 * s + nw, y + 4.0 * s, s, &row.mode_name, [1.0, 0.86, 0.36, 1.0]);
                 let mut about: Vec<String> = Vec::new();
                 if !row.host_name.is_empty() {
                     about.push(format!("chez {}", row.host_name));
@@ -493,6 +304,23 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 wd.ui.text(lx + 6.0 * s, y + 15.0 * s, s, &about.join("  "), GREY);
                 let count = format!("{} / {}", row.players, row.max_players);
                 wd.ui.text(lx + lw - 84.0 * s - Ui::text_width(&count, s), y + 9.0 * s, s, &count, if row.full() { [1.0, 0.5, 0.5, 1.0] } else { WHITE });
+                // Le ping : quatre barres, vertes selon sa qualite, et les millisecondes.
+                // (Une partie privee qui ne nous est pas ouverte ne donne pas son adresse : pas de ping.)
+                if !row.address.is_empty() {
+                    let ping = b.ping(&row.address);
+                    let lit = ping.flatten().map_or(0, crate::browser::bars);
+                    let px = lx + lw - 190.0 * s;
+                    for i in 0..4 {
+                        let h = (3.0 + 3.0 * i as f32) * s;
+                        wd.ui.rect(px + i as f32 * 4.0 * s, y + 19.0 * s - h, 3.0 * s, h, if i < lit { [0.3, 0.86, 0.36, 1.0] } else { [0.26, 0.26, 0.32, 1.0] });
+                    }
+                    let ms = match ping {
+                        None => "...".to_string(),
+                        Some(None) => "- ms".to_string(),
+                        Some(Some(ms)) => format!("{ms} ms"),
+                    };
+                    wd.ui.text(px + 19.0 * s, y + 9.0 * s, s, &ms, if lit > 0 { WHITE } else { GREY });
+                }
                 if row.locked() {
                     // Privee, et l'on n'est pas ami de l'hote : on la voit, on n'y entre pas.
                     wd.ui.bevel(lx + lw - 76.0 * s, y + 3.0 * s, 72.0 * s, bh, s, [0.2, 0.2, 0.24, 1.0], [0.3, 0.3, 0.36, 1.0], [0.1, 0.1, 0.12, 1.0]);
@@ -511,18 +339,19 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 }
                 wd.label(lx, by, lw, bh, &format!("{} / {pages}", b.page + 1), GREY);
             }
-            if let Some(note) = &b.note {
-                wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), bottom + 6.0 * s, s, note, [1.0, 0.86, 0.36, 1.0]);
+            match sh.field {
+                1 => type_into(&mut b.mode_query, inp, 16, seed_char),
+                _ => {
+                    let before = b.query.clone();
+                    type_into(&mut b.query, inp, 20, seed_char);
+                    if b.query != before {
+                        b.page = 0;
+                    }
+                }
             }
-            let before = b.query.clone();
-            type_into(&mut b.query, inp, 24, seed_char);
-            if b.query != before {
-                b.page = 0;
-            }
-            sh.field = 1;
         }
         Screen::Host => {
-            title(&mut wd, "Héberger une partie", (h * 0.05).floor(), 3.0 * s);
+            title(&mut wd, "Créer une partie", (h * 0.05).floor(), 3.0 * s);
             let form = &mut sh.host;
             let Some(mode) = sh.modes.get(form.pick).cloned() else {
                 sh.screen = Screen::Multi;
@@ -533,37 +362,42 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 form.pick = (form.pick + 1) % sh.modes.len().max(1);
                 form.places = 0;
             }
-            y += bh + 4.0 * s;
-            for line in crate::chatbox::wrap(&mode.about, s, 300.0 * s).iter().take(2) {
-                wd.ui.text(((w - Ui::text_width(line, s)) / 2.0).floor(), y, s, line, GREY);
-                y += 10.0 * s;
-            }
-            y += 22.0 * s;
-            if wd.field(x, y, bw, bh, "Nom de la partie (vide : « Partie de ... »)", &form.name, sh.field == 1, blink) {
+            y += bh + gap + 12.0 * s;
+            if wd.field(x, y, bw, bh, "Nom de la partie", &form.name, sh.field == 1, blink) {
                 sh.field = 1;
             }
             y += bh + gap;
-            let who = if form.public { "Partie publique : tout le monde peut la rejoindre" } else { "Partie privée : réservée à vos amis" };
-            if wd.button(x - 30.0 * s, y, bw + 60.0 * s, bh, who) {
-                form.public = !form.public;
+            let who = match form.visibility {
+                0 => "Publique",
+                1 => "Privée",
+                _ => "Solo",
+            };
+            if wd.button(x, y, bw, bh, &format!("Visibilité : {who}")) {
+                form.visibility = (form.visibility + 1) % 3;
             }
             y += bh + gap;
             let places = if form.places == 0 { mode.players } else { form.places };
-            if wd.button(x, y, bw, bh, &format!("Places : {places}")) {
-                let steps = [2u16, 4, 8, 12, 16, 24, 32, 50, 100];
-                form.places = steps.iter().copied().find(|p| *p > places).unwrap_or(steps[0]);
-            }
-            y += bh + gap;
-            if mode.keep_world {
-                y += 12.0 * s;
-                if wd.field(x, y, bw, bh, "Monde (gardé d'une partie à l'autre)", &form.world, sh.field == 2, blink) {
-                    sh.field = 2;
+            if form.visibility < 2 {
+                if wd.button(x, y, bw, bh, &format!("Places : {places}")) {
+                    let steps = [2u16, 4, 8, 12, 16, 24, 32, 50, 100];
+                    form.places = steps.iter().copied().find(|p| *p > places).unwrap_or(steps[0]);
                 }
                 y += bh + gap;
-            } else {
-                let note = "Chaque partie de ce mode commence dans un monde neuf.";
-                wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), y + 2.0 * s, s, note, GREY);
-                y += 14.0 * s;
+            }
+            if mode.keep_world {
+                // Un monde garde d'une partie a l'autre : son nom, et sa graine s'il est neuf.
+                let half = (bw / 2.0 - 3.0 * s).floor();
+                y += 12.0 * s;
+                if wd.field(x, y, half, bh, "Monde", &form.world, sh.field == 2, blink) {
+                    sh.field = 2;
+                }
+                let exists = std::path::Path::new("saves").join(form.world.trim()).join("graine.txt").exists();
+                if exists {
+                    wd.ui.text(x + bw - half, y + 6.0 * s, s, "Ce monde existe déjà.", GREY);
+                } else if wd.field(x + bw - half, y, half, bh, "Graine", &form.seed, sh.field == 3, blink) {
+                    sh.field = 3;
+                }
+                y += bh + gap;
             }
             y += 6.0 * s;
             if wd.button(x, y, bw, bh, "Lancer la partie") {
@@ -574,11 +408,10 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 sh.screen = Screen::Multi;
                 sh.field = 1;
             }
-            let note = "La partie tourne dans votre jeu. Rien à régler : ni port, ni box.";
-            wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), y + bh + 6.0 * s, s, note, GREY);
             match sh.field {
                 1 => type_into(&mut form.name, inp, 32, seed_char),
                 2 if mode.keep_world => type_into(&mut form.world, inp, 24, name_char),
+                3 if mode.keep_world => type_into(&mut form.seed, inp, 32, seed_char),
                 _ => {}
             }
         }
@@ -598,7 +431,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     None => "Chargement de la bibliothèque...".to_string(),
                     Some(Err(e)) => format!("Bibliothèque indisponible : {e}."),
                     Some(Ok(l)) if l.is_empty() && lib.installed.is_empty() => "Aucun mod dans la bibliothèque pour le moment.".to_string(),
-                    Some(Ok(_)) => "Les mods installés s'appliquent à vos parties solo.".to_string(),
+                    Some(Ok(_)) => String::new(),
                 };
                 wd.ui.text(((w - Ui::text_width(&state, s)) / 2.0).floor(), y0 - 12.0 * s, s, &state, GREY);
                 // Les mods de la bibliotheque, puis ceux qui ne sont que dans le dossier du joueur.
@@ -724,7 +557,6 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 } else {
                     sh.mic_echo = false;
                 }
-                wd.ui.text(xm, row(9.0) + 4.0 * s, s, "On entend les joueurs à moins de 48 blocs, d'où ils se trouvent.", GREY);
                 if wd.button(x, row(10.0), bw, bh, "Retour") {
                     sh.sound_page = false;
                 }
@@ -773,7 +605,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                     }
                 }
                 let by = top + per_col as f32 * (rh + 2.0 * s) + 4.0 * s;
-                let note = if sh.rebinding.is_some() { "Appuyez sur la nouvelle touche (Échap : annuler)." } else { "Cliquez sur une touche pour la changer. Casser et frapper : clic gauche ; poser et utiliser : clic droit." };
+                let note = if sh.rebinding.is_some() { "Appuyez sur la nouvelle touche" } else { "" };
                 wd.ui.text(((w - Ui::text_width(note, s)) / 2.0).floor(), by, s, note, GREY);
                 let half = (bw / 2.0 - 2.0 * s).floor();
                 if wd.button(x, by + 12.0 * s, half, bh, "Réinitialiser") {
@@ -822,17 +654,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 } else {
                     4.0
                 };
-                for (k, line) in [
-                    "Pour dépasser la fréquence de l'écran : synchro verticale sur non.",
-                    "Résolution : celle de la scène 3D. Le texte reste net dans tous les cas.",
-                    "Interface basse résolution (Mac) : bien plus rapide, pour le même texte.",
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    wd.ui.text(x1, row(lines_at) + 4.0 * s + k as f32 * 10.0 * s, s, line, GREY);
-                }
-                if wd.button(x, row(lines_at + 2.0) + 2.0 * s, bw, bh, "Retour") {
+                if wd.button(x, row(lines_at) + 12.0 * s, bw, bh, "Retour") {
                     sh.perf_page = false;
                 }
                 return action;
@@ -887,7 +709,6 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             }
             // Ressources modifiables.
             let ry = row(8.0) + 14.0 * s;
-            wd.ui.text(x1, ry - 10.0 * s, s, "Ressources (dossier assets) : textures PNG et modèles Blockbench", GREY);
             if wd.button(x1, ry, cw, bh, "Exporter les ressources") {
                 action = Action::Export;
             }
@@ -937,22 +758,11 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             // La partie que l'on heberge : ou en est sa mise en ligne.
             if let Some(lines) = hosting {
                 let (px, py, pw) = (8.0 * s, 8.0 * s, 270.0 * s);
-                wd.ui.rect(px, py, pw, 30.0 * s, [0.0, 0.0, 0.02, 0.7]);
+                let pw = lines.iter().map(|l| Ui::text_width(l, s)).fold(0.0, f32::max).min(pw) + 12.0 * s;
+                wd.ui.rect(px, py, pw, (8.0 + 11.0 * lines.len() as f32) * s, [0.0, 0.0, 0.02, 0.7]);
                 for (k, line) in lines.iter().enumerate() {
                     wd.ui.text(px + 6.0 * s, py + 6.0 * s + k as f32 * 11.0 * s, s, line, if k == 0 { [1.0, 0.86, 0.36, 1.0] } else { WHITE });
                 }
-            }
-            // L'aide-memoire suit les touches choisies par le joueur.
-            use crate::controls::Act;
-            let k = |a: Act| sh.settings.controls.shown_for(a);
-            let help = [
-                format!("{} {} {} {} bouger - {} sauter - {} courir - {} inventaire", k(Act::Forward), k(Act::Left), k(Act::Back), k(Act::Right), k(Act::Jump), k(Act::Sprint), k(Act::Inventory)),
-                "Clic gauche casser/frapper - clic droit poser/utiliser".to_string(),
-                format!("Molette ou 1-9 choisir - {} jeter - {} chat, / commande - {} parler", k(Act::Drop), k(Act::Chat), k(Act::Voice)),
-            ];
-            for (i, line) in help.iter().enumerate() {
-                let ty = y + bh + 14.0 * s + i as f32 * 10.0 * s;
-                wd.ui.text((w - Ui::text_width(line, s)) / 2.0, ty, s, line, GREY);
             }
         }
         Screen::Game => {}
@@ -968,4 +778,188 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
         }
     }
     action
+}
+
+/// Largeur de la barre des amis, en points d'interface.
+pub const FRIENDS_W: f32 = 176.0;
+
+/// La barre des amis, a droite de tous les ecrans : repliee, une languette avec le nombre de messages
+/// et de demandes en attente ; depliee, la liste des amis ou la conversation ouverte.
+/// `free` : le curseur est libre (on n'est pas en train de jouer, souris capturee).
+pub fn draw_friends(f: &mut crate::friends::Friends, ui: &mut Ui, inp: &Input, s: f32, t: f32, free: bool) {
+    use winit::keyboard::KeyCode;
+    let (w, h) = (ui.w, ui.h);
+    let mut wd = W { ui, mouse: inp.mouse, click: inp.lmb_click && free, down: inp.lmb, s };
+    let bh = 18.0 * s;
+    if !f.open {
+        // Repliee : une languette en haut a droite. En jeu, elle ne se montre que s'il y a du nouveau.
+        let n = f.waiting();
+        if !free && n == 0 {
+            return;
+        }
+        let label = if n > 0 { format!("Amis ({n})") } else { "Amis".to_string() };
+        let tw = Ui::text_width(&label, s) + 14.0 * s;
+        if free {
+            if wd.button(w - tw - 4.0 * s, 4.0 * s, tw, bh, &label) {
+                f.toggle();
+            }
+        } else {
+            wd.ui.rect(w - tw - 4.0 * s, 4.0 * s, tw, bh, [0.0, 0.0, 0.02, 0.6]);
+            wd.label(w - tw - 4.0 * s, 4.0 * s, tw, bh, &label, [1.0, 0.86, 0.36, 1.0]);
+        }
+        return;
+    }
+    let pw = FRIENDS_W * s;
+    let (px, ix, iw) = (w - pw, w - pw + 6.0 * s, pw - 12.0 * s);
+    wd.ui.rect(px, 0.0, pw, h, [0.05, 0.05, 0.08, 0.96]);
+    wd.ui.rect(px, 0.0, s, h, [0.3, 0.31, 0.38, 1.0]);
+    let blink = (t * 2.0) as i32 % 2 == 0;
+    let enter = inp.pressed.contains(&KeyCode::Enter) || inp.pressed.contains(&KeyCode::NumpadEnter);
+    let small = |wd: &mut W, x: f32, y: f32, bw: f32, text: &str| -> bool { wd.button(x, y, bw, 16.0 * s, text) };
+    if small(&mut wd, px + pw - 22.0 * s, 4.0 * s, 16.0 * s, ">") {
+        f.toggle();
+        return;
+    }
+    if !f.has_account() {
+        wd.ui.text(ix, 8.0 * s, s, "Amis", [1.0, 0.86, 0.36, 1.0]);
+        for (k, line) in crate::chatbox::wrap("Lancez le jeu depuis Epicube Hub, connecté à votre compte, pour retrouver vos amis.", s, iw).iter().enumerate() {
+            wd.ui.text(ix, 30.0 * s + k as f32 * 10.0 * s, s, line, GREY);
+        }
+        return;
+    }
+    if let Some(buddy) = f.chat_with.clone() {
+        // Conversation : l'ami et ce qu'il fait, les messages, la saisie en bas.
+        let status = match &f.list {
+            Some(Ok(l)) => l.friends.iter().find(|x| x.id == buddy.id).map_or(buddy.status.clone(), |x| x.status.clone()),
+            _ => buddy.status.clone(),
+        };
+        if small(&mut wd, ix, 4.0 * s, 16.0 * s, "<") {
+            f.close_chat();
+            return;
+        }
+        wd.ui.text(ix + 22.0 * s, 8.0 * s, s, &buddy.name, [1.0, 0.86, 0.36, 1.0]);
+        wd.ui.text(ix, 24.0 * s, s, &status, GREY);
+        if small(&mut wd, ix + iw - 44.0 * s, 20.0 * s, 44.0 * s, "Retirer") {
+            f.remove(&buddy);
+            f.close_chat();
+            return;
+        }
+        let iy = h - bh - 6.0 * s;
+        wd.field(ix, iy, iw - 22.0 * s, bh, "", &f.input, true, blink);
+        if small(&mut wd, ix + iw - 18.0 * s, iy + s, 18.0 * s, ">") || enter {
+            f.send();
+        }
+        type_into(&mut f.input, inp, 200, seed_char);
+        let (mut y, top) = (iy - 6.0 * s, 42.0 * s);
+        if f.chat.is_empty() {
+            wd.ui.text(ix, top, s, "Aucun message.", GREY);
+        }
+        for m in f.chat.iter().rev() {
+            let lines = crate::chatbox::wrap(&m.body, s, iw * 0.82);
+            let width = lines.iter().map(|l| Ui::text_width(l, s)).fold(0.0, f32::max) + 8.0 * s;
+            let height = lines.len() as f32 * 10.0 * s + 5.0 * s;
+            y -= height + 3.0 * s;
+            if y < top {
+                break;
+            }
+            // Les notres a droite, les siens a gauche.
+            let x0 = if m.mine { ix + iw - width } else { ix };
+            wd.ui.rect(x0, y, width, height, if m.mine { [0.72, 0.2, 0.165, 1.0] } else { [0.18, 0.18, 0.24, 1.0] });
+            for (k, line) in lines.iter().enumerate() {
+                wd.ui.text(x0 + 4.0 * s, y + 3.0 * s + k as f32 * 10.0 * s, s, line, WHITE);
+            }
+        }
+        return;
+    }
+    // La liste : ajouter un ami, les demandes recues, les amis, les demandes envoyees.
+    wd.ui.text(ix, 8.0 * s, s, "Amis", [1.0, 0.86, 0.36, 1.0]);
+    let mut y = 36.0 * s;
+    wd.field(ix, y, iw - 22.0 * s, bh, "Ajouter un ami : son pseudo", &f.name, true, blink);
+    if small(&mut wd, ix + iw - 18.0 * s, y + s, 18.0 * s, "+") || enter {
+        f.ask();
+    }
+    type_into(&mut f.name, inp, 16, name_char);
+    y += bh + 4.0 * s;
+    if let Some(note) = f.note.clone() {
+        for line in crate::chatbox::wrap(&note, s, iw).iter().take(2) {
+            wd.ui.text(ix, y, s, line, [0.6, 1.0, 0.6, 1.0]);
+            y += 10.0 * s;
+        }
+    }
+    y += 4.0 * s;
+    let list = match &f.list {
+        None => {
+            wd.ui.text(ix, y, s, "Chargement...", GREY);
+            return;
+        }
+        Some(Err(e)) => {
+            for (k, line) in crate::chatbox::wrap(e, s, iw).iter().enumerate() {
+                wd.ui.text(ix, y + k as f32 * 10.0 * s, s, line, GREY);
+            }
+            return;
+        }
+        Some(Ok(l)) => l.clone(),
+    };
+    let heading = |wd: &mut W, y: &mut f32, text: String| {
+        wd.ui.text(ix, *y, s, &text, GREY);
+        *y += 11.0 * s;
+    };
+    if !list.received.is_empty() {
+        heading(&mut wd, &mut y, format!("Demandes reçues ({})", list.received.len()));
+        for b in &list.received {
+            wd.ui.rect(ix, y, iw, 18.0 * s, [0.12, 0.12, 0.16, 1.0]);
+            wd.ui.text(ix + 4.0 * s, y + 5.0 * s, s, &b.name, WHITE);
+            if small(&mut wd, ix + iw - 58.0 * s, y + s, 30.0 * s, "Oui") {
+                f.accept(b);
+            }
+            if small(&mut wd, ix + iw - 26.0 * s, y + s, 26.0 * s, "Non") {
+                f.remove(b);
+            }
+            y += 20.0 * s;
+        }
+        y += 4.0 * s;
+    }
+    let online = list.friends.iter().filter(|b| b.online).count();
+    heading(&mut wd, &mut y, format!("Mes amis ({online} en ligne sur {})", list.friends.len()));
+    if list.friends.is_empty() {
+        wd.ui.text(ix, y, s, "Personne pour le moment.", GREY);
+        y += 12.0 * s;
+    }
+    for b in &list.friends {
+        if y + 24.0 * s > h - 4.0 * s {
+            break;
+        }
+        // Un clic sur un ami ouvre la conversation.
+        let hot = wd.over(ix, y, iw, 22.0 * s);
+        wd.ui.rect(ix, y, iw, 22.0 * s, if hot { [0.22, 0.22, 0.3, 1.0] } else { [0.12, 0.12, 0.16, 1.0] });
+        wd.ui.rect(ix + 4.0 * s, y + 5.0 * s, 4.0 * s, 4.0 * s, if b.online { [0.4, 0.9, 0.5, 1.0] } else { [0.35, 0.36, 0.42, 1.0] });
+        wd.ui.text(ix + 12.0 * s, y + 3.0 * s, s, &b.name, WHITE);
+        wd.ui.text(ix + 12.0 * s, y + 12.0 * s, s, &b.status, GREY);
+        if b.unread > 0 {
+            let n = b.unread.min(99).to_string();
+            let nw = Ui::text_width(&n, s) + 8.0 * s;
+            wd.ui.rect(ix + iw - nw - 3.0 * s, y + 5.0 * s, nw, 12.0 * s, [0.85, 0.65, 0.16, 1.0]);
+            wd.ui.text(ix + iw - nw + s, y + 7.0 * s, s, &n, WHITE);
+        }
+        if hot && wd.click {
+            crate::audio::play("clic", 0.6);
+            f.open_chat(b);
+        }
+        y += 24.0 * s;
+    }
+    if !list.sent.is_empty() {
+        y += 4.0 * s;
+        heading(&mut wd, &mut y, format!("Demandes envoyées ({})", list.sent.len()));
+        for b in &list.sent {
+            if y + 20.0 * s > h - 4.0 * s {
+                break;
+            }
+            wd.ui.rect(ix, y, iw, 18.0 * s, [0.12, 0.12, 0.16, 1.0]);
+            wd.ui.text(ix + 4.0 * s, y + 5.0 * s, s, &b.name, GREY);
+            if small(&mut wd, ix + iw - 46.0 * s, y + s, 46.0 * s, "Annuler") {
+                f.remove(b);
+            }
+            y += 20.0 * s;
+        }
+    }
 }
