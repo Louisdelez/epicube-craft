@@ -187,7 +187,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 None => format!("Hors ligne : {}", sh.settings.name),
             };
             wd.ui.text(w - Ui::text_width(&who, s) - 4.0 * s, h - 12.0 * s, s, &who, GREY);
-            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.13", GREY);
+            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.14", GREY);
         }
         Screen::Multi => {
             title(&mut wd, "Jouer", (h * 0.03).floor(), 3.0 * s);
@@ -224,7 +224,19 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
             modes.retain(|m| wanted.is_empty() || shared::commands::plain(&m.1).contains(&wanted));
             let mut y = top + 12.0 * s + bh;
             let room = ((bottom - 32.0 * s - y) / (bh + 2.0 * s)).floor().max(1.0) as usize;
-            for (id, name, n) in modes.iter().take(room) {
+            // La liste defile a la molette quand elle depasse ; un repere a droite dit ou l'on en est.
+            let most = modes.len().saturating_sub(room);
+            if wd.over(ix, y, iw, room as f32 * (bh + 2.0 * s)) && inp.scroll != 0.0 {
+                b.mode_scroll = (b.mode_scroll as i32 - inp.scroll.signum() as i32 * 2).clamp(0, most as i32) as usize;
+            }
+            b.mode_scroll = b.mode_scroll.min(most);
+            if most > 0 {
+                let track = room as f32 * (bh + 2.0 * s) - 2.0 * s;
+                let knob = (track * room as f32 / modes.len() as f32).max(8.0 * s);
+                wd.ui.rect(ix + iw + s, y, 2.0 * s, track, [0.1, 0.1, 0.14, 1.0]);
+                wd.ui.rect(ix + iw + s, y + (track - knob) * b.mode_scroll as f32 / most as f32, 2.0 * s, knob, [0.85, 0.65, 0.16, 1.0]);
+            }
+            for (id, name, n) in modes.iter().skip(b.mode_scroll).take(room) {
                 let picked = b.mode == *id;
                 let hot = wd.over(ix, y, iw, bh);
                 let fill = match (picked, hot) {

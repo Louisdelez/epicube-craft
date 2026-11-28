@@ -1,0 +1,18 @@
+{
+  "id": "pvpswap",
+  "name": "PvPSwap",
+  "version": "1.0.0",
+  "description": "Chacun dans son module, on s'équipe… puis tout le monde est échangé de place. Le dernier debout gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "PvPSwap",
+    "about": "Chacun dans son module, on s'équipe… puis tout le monde est échangé de place. Le dernier debout gagne.",
+    "tags": [
+      "pvp",
+      "survie",
+      "echange"
+    ],
+    "players": 8,
+    "game": "survie"
+  }
+}

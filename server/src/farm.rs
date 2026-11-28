@@ -59,14 +59,9 @@ impl Server {
 
     /// Use d'un cran l'outil tenu.
     pub(crate) fn wear_held(&mut self, id: u32) {
+        let roll = self.rng.d();
         if let Some(c) = self.clients.get_mut(&id) {
-            if let Some(st) = c.inv[c.sel].as_mut().filter(|s| items::max_dur(s.id) > 0) {
-                st.dur = st.dur.saturating_sub(1);
-                if st.dur == 0 {
-                    c.inv[c.sel] = None;
-                }
-                c.inv_dirty = true;
-            }
+            c.wear(1, roll);
         }
     }
 

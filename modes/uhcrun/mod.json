@@ -1,0 +1,18 @@
+{
+  "id": "uhcrun",
+  "name": "UHC Run",
+  "version": "1.0.0",
+  "description": "Un UHC en accéléré : on part équipé, le combat s'ouvre vite, la zone se referme en cinq minutes.",
+  "author": "Epicube",
+  "mode": {
+    "name": "UHC Run",
+    "about": "Un UHC en accéléré : on part équipé, le combat s'ouvre vite, la zone se referme en cinq minutes.",
+    "tags": [
+      "pvp",
+      "survie",
+      "rapide"
+    ],
+    "players": 16,
+    "game": "aventure"
+  }
+}

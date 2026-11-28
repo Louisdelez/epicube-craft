@@ -17,7 +17,7 @@ Le jeu tourne sur **macOS, Linux et Windows**, en solo ou à plusieurs, avec un 
 - **Ferme et cuisine** : riz, soja, thé, daikon, kabocha, élevage, pêche, et une vingtaine de plats, de l'onigiri au bento.
 - **Circuits de reiseki** : fils, relais, comparateurs, pistons, observateurs, distributeurs, entonnoirs, rails et chariots.
 - **Modes de jeu** : survie, créatif, aventure, spectateur, extrême ; quatre difficultés.
-- **Jouer** : un seul écran, les modes de jeu à gauche et leurs parties en ligne à droite avec leur ping, hébergement depuis le jeu sans rien régler, parties publiques ou réservées aux amis, modes de jeu tout faits (UHC, Bed Wars), chat, commandes, chat vocal de proximité.
+- **Jouer** : un seul écran, les modes de jeu à gauche et leurs parties en ligne à droite avec leur ping, hébergement depuis le jeu sans rien régler, parties publiques ou réservées aux amis, une trentaine de modes de jeu tout faits (UHC, Bed Wars, Sky Wars, Hunger Games et les jeux d'Epicube : SheepWars, Fallen Kingdoms, PvPSwap, Totem...), chat, commandes, chat vocal de proximité.
 - **Ressources modifiables** : textures en PNG, modèles au format Blockbench, sons remplaçables.
 
 ![Inventaire créatif](docs/images/inventaire-creatif.png)

@@ -1,0 +1,18 @@
+{
+  "id": "discosheep",
+  "name": "DiscoSheep",
+  "version": "1.0.0",
+  "description": "La piste de danse change de couleur : restez sur la bonne dalle avant que les autres disparaissent.",
+  "author": "Epicube",
+  "mode": {
+    "name": "DiscoSheep",
+    "about": "La piste de danse change de couleur : restez sur la bonne dalle avant que les autres disparaissent.",
+    "tags": [
+      "mini-jeu",
+      "reflexes",
+      "danse"
+    ],
+    "players": 12,
+    "game": "aventure"
+  }
+}

@@ -20,7 +20,7 @@ use shared::chunk::H;
 use shared::craft;
 use shared::items::{self, add_to, Slot, Stack};
 use shared::physics::d::step_drop;
-use shared::proto::{read_msg, write_msg, ClientMsg, ServerMsg, SlotRef, WindowKind, PROTOCOL_VERSION};
+use shared::proto::{act, read_msg, write_msg, ClientMsg, ServerMsg, SlotRef, WindowKind, PROTOCOL_VERSION};
 use shared::util::Rng;
 use shared::{gen, DAY_SECONDS, TPS};
 use std::collections::{HashMap, HashSet};
@@ -54,6 +54,9 @@ enum Win {
     Chest([i32; 3]),
     /// Echange avec le villageois de cet identifiant.
     Trade(u32),
+    /// Autel d'enchantement pose a cet endroit.
+    Enchant([i32; 3]),
+    Anvil,
 }
 
 impl Win {
@@ -65,6 +68,8 @@ impl Win {
             Win::Furnace(_) => WindowKind::Furnace,
             Win::Chest(_) => WindowKind::Chest,
             Win::Trade(_) => WindowKind::Trade,
+            Win::Enchant(_) => WindowKind::Enchant,
+            Win::Anvil => WindowKind::Anvil,
         }
     }
     fn pos(self) -> Option<[i32; 3]> {
@@ -84,10 +89,24 @@ struct PlayerSave {
     /// Point de reapparition choisi en dormant.
     home: Option<[f64; 3]>,
     dim: u8,
+    /// Points d'experience.
+    xp: u32,
+}
+
+/// Format d'avant l'experience.
+#[derive(Deserialize)]
+struct PlayerSaveV4 {
+    pos: [f64; 3],
+    hp: f64,
+    hunger: f64,
+    inv: Vec<Slot>,
+    home: Option<[f64; 3]>,
+    dim: u8,
 }
 
 /// En-tete des sauvegardes en double precision. Les fichiers sans en-tete sont les anciens, en simple precision.
-pub(crate) const SAVE_MAGIC: &[u8; 4] = b"VX64";
+pub(crate) const SAVE_MAGIC: &[u8; 4] = b"VX65";
+const SAVE_MAGIC_V4: &[u8; 4] = b"VX64";
 
 /// Format d'avant la double precision.
 #[derive(Deserialize)]
@@ -153,15 +172,19 @@ fn read_player(data: &[u8]) -> Option<PlayerSave> {
     if let Some(body) = data.strip_prefix(SAVE_MAGIC) {
         return bincode::deserialize::<PlayerSave>(body).ok();
     }
+    if let Some(body) = data.strip_prefix(SAVE_MAGIC_V4) {
+        let v: PlayerSaveV4 = bincode::deserialize(body).ok()?;
+        return Some(PlayerSave { pos: v.pos, hp: v.hp, hunger: v.hunger, inv: v.inv, home: v.home, dim: v.dim, xp: 0 });
+    }
     // Anciens formats, du plus recent au plus ancien.
     if let Ok(v) = bincode::deserialize::<PlayerSaveV3>(data) {
-        return Some(PlayerSave { pos: wide(v.pos), hp: v.hp as f64, hunger: v.hunger as f64, inv: v.inv, home: v.home.map(wide), dim: v.dim });
+        return Some(PlayerSave { pos: wide(v.pos), hp: v.hp as f64, hunger: v.hunger as f64, inv: v.inv, home: v.home.map(wide), dim: v.dim, xp: 0 });
     }
     if let Ok(v) = bincode::deserialize::<PlayerSaveV2>(data) {
-        return Some(PlayerSave { pos: wide(v.pos), hp: v.hp as f64, hunger: v.hunger as f64, inv: v.inv, home: v.home.map(wide), dim: 0 });
+        return Some(PlayerSave { pos: wide(v.pos), hp: v.hp as f64, hunger: v.hunger as f64, inv: v.inv, home: v.home.map(wide), dim: 0, xp: 0 });
     }
     let v1: PlayerSaveV1 = bincode::deserialize(data).ok()?;
-    Some(PlayerSave { pos: wide(v1.pos), hp: v1.hp as f64, hunger: v1.hunger as f64, inv: v1.inv, home: None, dim: 0 })
+    Some(PlayerSave { pos: wide(v1.pos), hp: v1.hp as f64, hunger: v1.hunger as f64, inv: v1.inv, home: None, dim: 0, xp: 0 })
 }
 
 /// Joueur qui a presente un jeton valide et doit encore repondre au defi.
@@ -199,6 +222,14 @@ struct Client {
     armor: [Slot; 4],
     /// Derniere tenue annoncee aux autres joueurs.
     gear_sent: [u16; 4],
+    /// Points d'experience, et la graine des offres de l'autel (elle change a chaque enchantement pose).
+    xp: u32,
+    xp_dirty: bool,
+    xp_seed: u64,
+    held_sent: u16,
+    /// Postures montrees aux autres : arc tendu, accroupi.
+    aiming: bool,
+    sneaking: bool,
     cursor: Slot,
     craft: [Slot; 9],
     window: Win,
@@ -239,8 +270,13 @@ struct Client {
     tea_t: f64,
     effect_acc: f64,
     fishing: Option<farm::Fishing>,
-    /// Bouclier leve.
+    /// Bouclier leve, et depuis quand : il ne pare qu'un quart de seconde apres.
     blocking: bool,
+    block_since: Instant,
+    /// Secondes pendant lesquelles le bouclier, abattu par une hache, ne pare plus.
+    shield_off: f64,
+    /// Degats du dernier coup encaisse : pendant l'invulnerabilite, seul un coup plus fort passe, pour la difference.
+    last_dmg: f64,
     /// Secondes passees dans le voile d'un torii (negatif : vient d'arriver, doit d'abord en sortir).
     veil_t: f64,
     /// Robe de plumes deployee.
@@ -250,20 +286,45 @@ struct Client {
 
 impl Client {
     /// Encaisse un coup de `dmg` a travers l'armure : les pieces s'usent (et cassent), le reste passe.
-    /// Renvoie les degats subis.
-    fn absorb(&mut self, dmg: f64) -> f64 {
+    /// Renvoie les degats subis. `roll` : un tirage de 0 a 1, pour la Solidite.
+    fn absorb(&mut self, dmg: f64, roll: f64) -> f64 {
+        use shared::ench as e;
         let (points, toughness, _) = items::defense(&self.armor);
         let wear = items::armor_wear(dmg);
-        for s in self.armor.iter_mut() {
+        let guard = self.worn(e::PROTECTION);
+        for (k, s) in self.armor.iter_mut().enumerate() {
             if let Some(st) = s.as_mut().filter(|st| items::armor(st.id).is_some()) {
-                st.dur = st.dur.saturating_sub(wear);
+                // Solidite : la piece ne s'use qu'une fois sur (niveau + 1), a peu pres.
+                let spared = ((roll * 7.0 + k as f64 * 0.37).fract()) >= 0.6 + 0.4 / (st.ench.level(e::UNBREAKING) as f64 + 1.0);
+                if !spared {
+                    st.dur = st.dur.saturating_sub(wear);
+                }
                 if st.dur == 0 {
                     *s = None;
                 }
                 self.inv_dirty = true;
             }
         }
-        items::mitigate(dmg, points, toughness)
+        // Protection : 4 % par niveau porte, 80 % au plus.
+        items::mitigate(dmg, points, toughness) * (1.0 - 0.04 * guard.min(20) as f64)
+    }
+
+    /// Somme des niveaux de l'enchantement `e` sur les pieces portees.
+    fn worn(&self, e: u8) -> u32 {
+        self.armor.iter().flatten().map(|st| st.ench.level(e) as u32).sum()
+    }
+
+    /// Use l'objet tenu de `n` crans (il casse a zero). `roll` : un tirage de 0 a 1, pour la Solidite.
+    fn wear(&mut self, n: u16, roll: f64) {
+        let Some(st) = self.inv[self.sel].as_mut().filter(|st| n > 0 && items::max_dur(st.id) > 0) else { return };
+        if roll >= 1.0 / (st.ench.level(shared::ench::UNBREAKING) as f64 + 1.0) {
+            return;
+        }
+        st.dur = st.dur.saturating_sub(n);
+        if st.dur == 0 {
+            self.inv[self.sel] = None;
+        }
+        self.inv_dirty = true;
     }
 
     fn chunk(&self) -> (i32, i32) {
@@ -336,6 +397,10 @@ struct Server {
     status: std::sync::Arc<party::Status>,
     /// Creatures mortes pendant ce tick, a annoncer aux mods : (dimension, genre, position).
     mod_deaths: Vec<(u8, u8, u8, Vec3)>,
+    /// Experience a remettre : (joueur, points).
+    xp_due: Vec<(u32, u32)>,
+    /// Enchantements de l'outil qui casse le bloc en cours.
+    dig_ench: shared::ench::Ench,
 }
 
 /// Tout ce qui appartient a une dimension.
@@ -414,6 +479,8 @@ impl Server {
             mods,
             mod_kicks: Vec::new(),
             mod_deaths: Vec::new(),
+            xp_due: Vec::new(),
+            dig_ench: shared::ench::Ench::NONE,
             pvp: true,
             regen: true,
             spawning: true,
@@ -532,6 +599,12 @@ impl Client {
                         inv: [None; 36],
                         armor: [None; 4],
                         gear_sent: [0; 4],
+                        xp: 0,
+                        xp_dirty: false,
+                        xp_seed: 0,
+                        held_sent: 0,
+                        aiming: false,
+                        sneaking: false,
                         cursor: None,
                         craft: [None; 9],
                         window: Win::None,
@@ -565,6 +638,9 @@ impl Client {
                         effect_acc: 0.0,
                         fishing: None,
                         blocking: false,
+                        block_since: now.checked_sub(Duration::from_secs(1)).unwrap_or(now),
+                        shield_off: 0.0,
+                        last_dmg: 0.0,
                         veil_t: 0.0,
                         gliding: false,
                         glide_acc: 0.0,
@@ -652,6 +728,42 @@ fn launch(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: acco
     })?;
     let announcer = party.filter(|p| !p.hub.is_empty()).map(|p| party::announce(p, port, mod_count, status.clone(), door));
     Ok(ServerHandle { tx: ev_tx, join: Some(join), port, status, announcer })
+}
+
+
+/// Ce que donne l'enclume pour deux objets : il faut deux fois le meme, qui s'use.
+pub fn forged(a: Slot, b: Slot) -> Option<Stack> {
+    let (a, b) = (a?, b?);
+    let max = items::max_dur(a.id);
+    if a.id != b.id || max == 0 {
+        return None;
+    }
+    let dur = (a.dur as u32 + b.dur as u32 + max as u32 * 12 / 100).min(max as u32) as u16;
+    Some(Stack { dur, ench: a.ench.merge(b.ench, a.id), ..a })
+}
+
+/// Degats qu'ajoute le Tranchant d'une lame.
+pub(crate) fn sharp(ench: shared::ench::Ench) -> f64 {
+    match ench.level(shared::ench::SHARPNESS) {
+        0 => 0.0,
+        l => 0.5 * l as f64 + 0.5,
+    }
+}
+
+/// Degats du fauchage d'une lame sur les voisins de la cible : 1, plus une part du coup selon le Fauchage.
+pub(crate) fn swept(ench: shared::ench::Ench, dmg: f64) -> f64 {
+    let l = ench.level(shared::ench::SWEEPING) as f64;
+    1.0 + dmg * l / (l + 1.0)
+}
+
+/// Ce qu'il advient d'un coup porte a un joueur.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Struck {
+    /// Rien : la cible etait hors d'atteinte du coup (morte, en creatif, encore invulnerable).
+    Missed,
+    /// Pare au bouclier.
+    Blocked,
+    Hurt,
 }
 
 /// Par ou les connexions des joueurs entrent dans le serveur : celles qu'il recoit lui-meme, et
@@ -754,7 +866,7 @@ fn slot_mut<'a>(c: &'a mut Client, world: &'a mut World, slot: SlotRef) -> Optio
         SlotRef::Inv(i) => c.inv.get_mut(i as usize),
         SlotRef::Armor(i) => c.armor.get_mut(i as usize),
         SlotRef::Craft(i) => {
-            let ok = win == Win::Table || (win == Win::Inventory && [0, 1, 3, 4].contains(&i));
+            let ok = win == Win::Table || (win == Win::Inventory && [0, 1, 3, 4].contains(&i)) || (matches!(win, Win::Enchant(_) | Win::Anvil) && i < 2);
             if ok {
                 c.craft.get_mut(i as usize)
             } else {
@@ -860,37 +972,105 @@ impl Server {
         self.count_players();
     }
 
-    /// Un joueur en frappe un autre : memes regles que contre une creature (force du coup, allonge, usure).
-    fn hit_player(&mut self, id: u32, target: u32) {
+    /// Un joueur en frappe un autre, selon les regles du combat (voir `combat`).
+    fn hit_player(&mut self, id: u32, target: u32, sprint: bool) {
+        use shared::proto::blow;
         let now = Instant::now();
-        let Some(victim) = self.clients.get(&target).filter(|v| v.ready && !v.dead).map(|v| (Vec3::from(v.pos), v.dim, v.mode)) else { return };
+        let Some(victim) = self.clients.get(&target).filter(|v| v.ready && !v.dead).map(|v| (Vec3::from(v.pos), v.dim, v.mode, v.on_ground)) else { return };
         let Some(c) = self.clients.get_mut(&id) else { return };
         let elapsed = now.duration_since(c.last_hit).as_secs_f64();
         if !self.pvp || id == target || c.dead || c.blocking || elapsed < 0.1 || c.dim != victim.1 || shared::rules::invulnerable(victim.2) {
             return;
         }
-        let w = items::weapon(c.held());
+        let held = c.held();
+        let w = items::weapon(held);
         if c.eye().distance(victim.0 + Vec3::Y * 0.9) > 5.5 + w.reach {
             return;
         }
+        // Un mod peut retenir le coup : pas de coup entre coequipiers, pas de combat en zone sure.
+        let victim_name = self.clients.get(&target).map(|v| v.name.clone()).unwrap_or_default();
+        if !self.mod_event("hit", Some(id), &[mods::Arg::S(victim_name)]) {
+            return;
+        }
+        let Some(c) = self.clients.get_mut(&id) else { return };
         let power = items::charge(elapsed, w.speed);
-        let falling = !c.on_ground && !c.fly && c.fall_peak - c.pos[1] > 0.05;
-        let dmg = w.dmg * power * if falling && power > 0.85 { 1.5 } else { 1.0 };
+        let ready = power > 0.85;
+        // En courant, l'arme en garde : le coup repousse loin, mais n'est ni critique ni fauchant.
+        let sprint = sprint && ready;
+        let drop = c.fall_peak - c.pos[1];
+        let falling = !c.on_ground && !c.fly && drop > 0.05;
+        let crit = falling && ready && !sprint;
+        let ench = c.inv[c.sel].map_or(shared::ench::Ench::NONE, |st| st.ench);
+        let mut dmg = (w.dmg + sharp(ench)) * power * if crit { 1.5 } else { 1.0 };
+        if held == Some(items::TETSUBO) && falling {
+            dmg += 3.0 * (drop - 1.5).clamp(0.0, 6.0);
+            c.fall_peak = c.pos[1];
+        }
+        let sweeping = ready && !crit && !sprint && c.on_ground && (matches!(held.and_then(items::tool), Some((items::SWORD, _))) || held == Some(items::NAGINATA));
+        let axe = matches!(held.and_then(items::tool), Some((items::AXE, _)));
         c.last_hit = now;
         c.exhaustion += 0.1;
-        if let Some(st) = c.inv[c.sel].as_mut().filter(|_| w.wear > 0) {
-            st.dur = st.dur.saturating_sub(w.wear);
-            if st.dur == 0 {
-                c.inv[c.sel] = None;
-            }
-            c.inv_dirty = true;
-        }
+        let roll = self.rng.d();
+        c.wear(w.wear, roll);
         let from = Vec3::from(c.pos);
         let away = Vec3::new(victim.0.x - from.x, 0.0, victim.0.z - from.z).normalize_or_zero();
+        // Le recul souleve qui a les pieds au sol ; en l'air, il ne fait que pousser : c'est ce qui permet d'enchainer.
+        let lift = if victim.3 { 4.5 } else { 1.2 };
+        let knock = (away * (if sprint { 12.5 } else { 7.0 } + 6.0 * ench.level(shared::ench::KNOCKBACK) as f64) + Vec3::Y * lift) * w.knock;
+        let kind = if crit { blow::CRIT } else if sprint { blow::SPRINT } else { blow::PLAIN };
+        match self.strike(target, dmg, knock, axe, kind) {
+            Struck::Missed => return,
+            Struck::Blocked => {
+                // Un coup pare renvoie un peu celui qui l'a porte.
+                if let Some(c) = self.clients.get(&id) {
+                    c.send(ServerMsg::Knock { vel: (-away * 3.5 + Vec3::Y * 2.0).to_array() });
+                }
+                return;
+            }
+            Struck::Hurt => {}
+        }
         if let Some(v) = self.clients.get_mut(&target) {
             v.hit_by = Some((id, now));
         }
-        self.hurt_player(target, dmg, (away * 7.0 + Vec3::Y * 4.5) * w.knock);
+        // Epines : la cuirasse de la cible peut blesser qui la frappe.
+        let thorns = self.clients.get(&target).map_or(0, |v| v.worn(shared::ench::THORNS));
+        if thorns > 0 && self.rng.chance(0.15 * thorns as f64) {
+            let hurt = 1.0 + self.rng.range(0, 4) as f64;
+            self.strike(id, hurt, Vec3::ZERO, false, blow::PLAIN);
+        }
+        if !sweeping {
+            return;
+        }
+        // Fauchage : la lame effleure aussi les voisins de la cible, joueurs et creatures.
+        let (radius, side) = if held == Some(items::NAGINATA) { (2.6, dmg * 0.5) } else { (1.6, swept(ench, dmg)) };
+        let dim = victim.1;
+        let near: Vec<(u32, Vec3)> = self
+            .clients
+            .iter()
+            .filter(|(o, v)| **o != id && **o != target && v.ready && !v.dead && v.dim == dim)
+            .map(|(o, v)| (*o, Vec3::from(v.pos)))
+            .filter(|(_, p)| p.distance(victim.0) < radius && p.distance(from) < 6.0)
+            .collect();
+        for (o, p) in near {
+            let push = Vec3::new(p.x - from.x, 0.0, p.z - from.z).normalize_or_zero() * 4.0 + Vec3::Y * 3.0;
+            if self.strike(o, side, push, false, blow::SWEEP) == Struck::Hurt {
+                if let Some(v) = self.clients.get_mut(&o) {
+                    v.hit_by = Some((id, now));
+                }
+            }
+        }
+        let mut swept = Vec::new();
+        for o in self.mobs.iter_mut() {
+            if o.kind != shared::mobs::CART && o.hurt_cd <= 0.0 && o.pos.distance(victim.0) < radius && o.pos.distance(from) < 6.0 {
+                o.hp -= side;
+                o.hurt_cd = 0.35;
+                o.vel += Vec3::new(o.pos.x - from.x, 0.0, o.pos.z - from.z).normalize_or_zero() * 4.0 + Vec3::Y * 3.0;
+                swept.push(o.id);
+            }
+        }
+        for m in swept {
+            self.broadcast(ServerMsg::MobHurt { id: m }, None);
+        }
     }
 
     /// Tient a jour le nombre de joueurs que la partie annonce.
@@ -928,6 +1108,7 @@ impl Server {
                 | ClientMsg::Use { .. }
                 | ClientMsg::Attack { .. }
                 | ClientMsg::Hit { .. }
+                | ClientMsg::Swing { .. }
                 | ClientMsg::Interact { .. }
                 | ClientMsg::Click { .. }
                 | ClientMsg::Craft { .. }
@@ -1005,7 +1186,20 @@ impl Server {
             ClientMsg::Use { target } => self.use_item(id, target),
             ClientMsg::Select(s) => {
                 if let Some(c) = self.clients.get_mut(&id) {
-                    c.sel = (s as usize).min(8);
+                    let sel = (s as usize).min(8);
+                    if sel != c.sel {
+                        // Changer d'arme la remet en garde : pas de coup a pleine force en passant de l'une a l'autre.
+                        c.sel = sel;
+                        c.last_hit = Instant::now();
+                        let lowered = std::mem::take(&mut c.blocking);
+                        let eased = std::mem::take(&mut c.aiming);
+                        if lowered {
+                            self.act(id, act::GUARD_DOWN);
+                        }
+                        if eased {
+                            self.act(id, act::RELEASE);
+                        }
+                    }
                 }
             }
             ClientMsg::OpenInventory => self.open_window(id, Win::Inventory),
@@ -1013,8 +1207,37 @@ impl Server {
             ClientMsg::Click { slot, right, shift } => self.click(id, slot, right, shift),
             ClientMsg::Craft { recipe } => self.craft_recipe(id, recipe as usize),
             ClientMsg::DropItem { all } => self.drop_selected(id, all),
-            ClientMsg::Attack { id: mob } => self.attack(id, mob),
-            ClientMsg::Hit { id: target } => self.hit_player(id, target),
+            ClientMsg::Attack { id: mob, sprint } => {
+                self.act(id, act::SWING);
+                self.attack_with(id, mob, sprint)
+            }
+            ClientMsg::Hit { id: target, sprint } => {
+                self.act(id, act::SWING);
+                self.hit_player(id, target, sprint)
+            }
+            ClientMsg::Swing { miss } => {
+                if let Some(c) = self.clients.get_mut(&id).filter(|_| miss) {
+                    c.last_hit = Instant::now();
+                }
+                self.act(id, act::SWING);
+            }
+            ClientMsg::Aim(on) => {
+                if let Some(c) = self.clients.get_mut(&id) {
+                    let on = on && c.held() == Some(items::YUMI);
+                    if on != c.aiming {
+                        c.aiming = on;
+                        self.act(id, if on { act::AIM } else { act::RELEASE });
+                    }
+                }
+            }
+            ClientMsg::Enchant { index } => self.enchant(id, index as usize),
+            ClientMsg::Forge => self.forge(id),
+            ClientMsg::Sneak(on) => {
+                if let Some(c) = self.clients.get_mut(&id).filter(|c| c.sneaking != on) {
+                    c.sneaking = on;
+                    self.act(id, if on { act::SNEAK } else { act::STAND });
+                }
+            }
             ClientMsg::Interact { id: mob } => self.interact(id, mob),
             ClientMsg::Respawn => {
                 let was_dead = self.clients.get(&id).is_some_and(|c| c.dead);
@@ -1023,7 +1246,13 @@ impl Server {
                     self.mod_event("respawn", Some(id), &[]);
                 }
             }
-            ClientMsg::Shoot { charge } => self.shoot(id, charge),
+            ClientMsg::Shoot { charge } => {
+                if self.clients.get_mut(&id).is_some_and(|c| std::mem::take(&mut c.aiming)) {
+                    self.act(id, act::RELEASE);
+                }
+                self.act(id, act::SWING);
+                self.shoot(id, charge)
+            }
             ClientMsg::Trade { index } => self.trade(id, index),
             ClientMsg::Rebase => self.resync(id),
             ClientMsg::Ping { .. } => {}
@@ -1034,7 +1263,15 @@ impl Server {
             }
             ClientMsg::Block(up) => {
                 if let Some(c) = self.clients.get_mut(&id) {
-                    c.blocking = up && c.held() == Some(items::SHIELD);
+                    let up = up && c.held() == Some(items::SHIELD) && c.shield_off <= 0.0;
+                    if up && !c.blocking {
+                        c.block_since = Instant::now();
+                    }
+                    let changed = up != c.blocking;
+                    c.blocking = up;
+                    if changed {
+                        self.act(id, if up { act::GUARD_UP } else { act::GUARD_DOWN });
+                    }
                 }
             }
         }
@@ -1145,7 +1382,7 @@ impl Server {
             .clients
             .iter()
             .filter(|(oid, c)| **oid != id && c.ready)
-            .flat_map(|(oid, c)| [ServerMsg::PlayerJoin { id: *oid, name: c.name.clone(), account: c.account }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)) }])
+            .flat_map(|(oid, c)| [ServerMsg::PlayerJoin { id: *oid, name: c.name.clone(), account: c.account }, ServerMsg::Gear { id: *oid, armor: c.armor.map(|s| s.map_or(0, |st| st.id)), held: c.held().unwrap_or(0) }])
             .collect();
         let drops: Vec<ServerMsg> = self
             .drops
@@ -1163,6 +1400,7 @@ impl Server {
             }
             c.hp = s.hp.clamp(1.0, 20.0);
             c.hunger = s.hunger.clamp(0.0, 20.0);
+            c.xp = s.xp;
             // Les quatre pieces portees suivent les 36 cases du sac dans le fichier.
             for (dst, src) in c.inv.iter_mut().chain(c.armor.iter_mut()).zip(s.inv) {
                 *dst = src;
@@ -1176,6 +1414,7 @@ impl Server {
         c.view = (view as i32).clamp(2, MAX_VIEW);
         c.ready = true;
         c.moved = true;
+        c.xp_dirty = true;
         // Aide au developpement : EPICUBE_DEMO=armes remplit l'inventaire d'armes et d'outils.
         // EPICUBE_DEMO=armure : une armure de fer sur le dos, les autres tenues dans le sac.
         if std::env::var("EPICUBE_DEMO").is_ok_and(|v| v == "armure") {
@@ -1282,7 +1521,8 @@ impl Server {
         } else if on_ground {
             let fall = c.fall_peak - pos[1];
             if !c.on_ground && fall > 3.5 {
-                c.hp -= (fall - 3.0).floor();
+                let soft = 1.0 - (0.12 * c.worn(shared::ench::FEATHER_FALLING) as f64).min(0.8);
+                c.hp -= ((fall - 3.0).floor() * soft).round();
                 c.stats_dirty = true;
             }
             c.fall_peak = pos[1];
@@ -1310,6 +1550,116 @@ impl Server {
     /// Fait entendre un son a tous ceux qui sont dans ce monde (voir `shared::proto::sound`).
     pub(crate) fn sound(&self, pos: [i32; 3], kind: u8, pitch: u8) {
         self.broadcast(ServerMsg::Sound { pos, kind, pitch }, None);
+    }
+
+    /// Donne de l'experience a un joueur. Le Raccommodage en prend d'abord sa part pour reparer ce qu'il porte.
+    pub(crate) fn give_xp(&mut self, id: u32, points: u32) {
+        let Some(c) = self.clients.get_mut(&id).filter(|c| points > 0 && !c.dead) else { return };
+        let mut left = points;
+        for st in c.inv.iter_mut().skip(c.sel).take(1).chain(c.armor.iter_mut()).flatten() {
+            let max = items::max_dur(st.id);
+            if st.ench.level(shared::ench::MENDING) > 0 && st.dur < max && left > 0 {
+                // Deux crans d'usure rendus par point d'experience.
+                let used = left.min((max - st.dur).div_ceil(2) as u32);
+                st.dur = (st.dur + (used * 2) as u16).min(max);
+                left -= used;
+                c.inv_dirty = true;
+            }
+        }
+        c.xp = c.xp.saturating_add(left);
+        c.xp_dirty = true;
+        let at = [c.pos[0].floor() as i32, c.pos[1].floor() as i32 + 1, c.pos[2].floor() as i32];
+        c.send(ServerMsg::Sound { pos: at, kind: shared::proto::sound::XP, pitch: 0 });
+    }
+
+    /// Retire `levels` niveaux a un joueur, en gardant sa part du niveau en cours.
+    fn pay_levels(&mut self, id: u32, levels: u32) {
+        let Some(c) = self.clients.get_mut(&id) else { return };
+        let (level, progress) = shared::ench::level_of(c.xp);
+        let new = level.saturating_sub(levels);
+        c.xp = shared::ench::points_for(new) + (progress * shared::ench::to_next(new) as f32) as u32;
+        c.xp_dirty = true;
+    }
+
+    /// Bibliotheques qui entourent un autel : celles a deux blocs de lui, a sa hauteur ou juste au-dessus.
+    fn shelves(&self, at: [i32; 3]) -> u8 {
+        let mut n = 0;
+        for dy in 0..2 {
+            for dz in -2..=2i32 {
+                for dx in -2..=2i32 {
+                    let ring = dx.abs() == 2 || dz.abs() == 2;
+                    if ring && self.world.get([at[0] + dx, at[1] + dy, at[2] + dz]).is_some_and(|(b, _)| b == blocks::BOOKSHELF) {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n.min(15)
+    }
+
+    /// Ce que l'autel propose au joueur pour l'objet qu'il y a pose (rien s'il est deja enchante).
+    fn altar_offers(&self, id: u32, at: [i32; 3]) -> (Vec<shared::ench::Offer>, u8) {
+        let shelves = self.shelves(at);
+        let offers = match self.clients.get(&id).and_then(|c| c.craft[0].map(|st| (st, c.xp_seed))) {
+            Some((st, seed)) if st.ench.is_empty() => shared::ench::offers(st.id, shelves, seed),
+            _ => Vec::new(),
+        };
+        (offers, shelves)
+    }
+
+    /// Accepte une offre de l'autel : elle coute ses cristaux et ses niveaux (1, 2 ou 3 selon son rang),
+    /// et demande d'avoir atteint le niveau qu'elle affiche.
+    fn enchant(&mut self, id: u32, index: usize) {
+        let Some(Win::Enchant(at)) = self.clients.get(&id).map(|c| c.window) else { return };
+        let (offers, _) = self.altar_offers(id, at);
+        let Some(offer) = offers.get(index) else { return };
+        let fresh = (self.rng.d() * 9.0e18) as u64;
+        let Some(c) = self.clients.get_mut(&id) else { return };
+        let price = index as u32 + 1;
+        let free = c.mode == shared::rules::CREATIVE;
+        let crystals = c.craft[1].filter(|st| st.id == blocks::CRYSTAL as u16).map_or(0, |st| st.n as u32);
+        if !free && (shared::ench::level_of(c.xp).0 < offer.cost as u32 || crystals < price) {
+            return;
+        }
+        if let Some(st) = c.craft[0].as_mut() {
+            st.ench = offer.ench;
+        }
+        if !free {
+            c.craft[1] = c.craft[1].filter(|st| st.n as u32 > price).map(|st| Stack { n: st.n - price as u8, ..st });
+        }
+        c.xp_seed = fresh;
+        c.inv_dirty = true;
+        if !free {
+            self.pay_levels(id, price);
+        }
+        self.sound(at, shared::proto::sound::ENCHANT, 0);
+    }
+
+    /// Reunit les deux objets poses sur l'enclume : leurs enchantements se combinent, leur usure s'ajoute.
+    fn forge(&mut self, id: u32) {
+        let Some(c) = self.clients.get_mut(&id).filter(|c| c.window == Win::Anvil) else { return };
+        let Some(out) = forged(c.craft[0], c.craft[1]) else { return };
+        let cost = shared::ench::anvil_cost(out.ench);
+        let free = c.mode == shared::rules::CREATIVE;
+        if !free && shared::ench::level_of(c.xp).0 < cost {
+            return;
+        }
+        (c.craft[0], c.craft[1], c.inv_dirty) = (Some(out), None, true);
+        let at = [c.pos[0].floor() as i32, c.pos[1].floor() as i32, c.pos[2].floor() as i32];
+        if !free {
+            self.pay_levels(id, cost);
+        }
+        self.sound(at, shared::proto::sound::ANVIL, 0);
+    }
+
+    /// Montre aux autres joueurs de sa dimension le geste ou la posture d'un joueur.
+    pub(crate) fn act(&self, id: u32, act: u8) {
+        let Some(dim) = self.clients.get(&id).filter(|c| c.ready).map(|c| c.dim) else { return };
+        for (o, c) in &self.clients {
+            if *o != id && c.ready && c.dim == dim {
+                c.send(ServerMsg::PlayerAct { id, act });
+            }
+        }
     }
 
     fn broadcast_all(&self, msg: ServerMsg, except: Option<u32>) {
@@ -1486,7 +1836,8 @@ impl Server {
             return self.break_block(pos, false);
         }
         let held = c.held();
-        let Some(time) = items::break_time(b, held) else { return };
+        let tool_ench = c.inv[c.sel].map_or(shared::ench::Ench::NONE, |st| st.ench);
+        let Some(time) = items::break_time_with(b, held, tool_ench.level(shared::ench::EFFICIENCY)) else { return };
         // Tolerance sur la duree : le client mesure le temps de son cote.
         let now = Instant::now();
         if now.duration_since(c.last_dig).as_secs_f64() < time.max(0.15) * 0.7 {
@@ -1505,15 +1856,18 @@ impl Server {
                 Some(_) => 1,
                 None => items::weapon(c.held()).wear * 2,
             };
-            if let Some(st) = c.inv[c.sel].as_mut().filter(|_| wear > 0) {
-                st.dur = st.dur.saturating_sub(wear);
-                if st.dur == 0 {
-                    c.inv[c.sel] = None;
-                }
-                c.inv_dirty = true;
-            }
+            let roll = self.rng.d();
+            c.wear(wear, roll);
         }
-        self.break_block(pos, items::can_harvest(b, held));
+        let harvest = items::can_harvest(b, held);
+        self.dig_ench = tool_ench;
+        self.break_block(pos, harvest);
+        self.dig_ench = shared::ench::Ench::NONE;
+        // Un minerai qui lache sa gemme donne un peu d'experience ; rendu tel quel par le Toucher de soie, non.
+        if harvest && tool_ench.level(shared::ench::SILK_TOUCH) == 0 {
+            let xp = items::block_xp(b, &mut self.rng);
+            self.give_xp(id, xp);
+        }
     }
 
     /// Demande aux mods s'ils laissent le joueur casser ou poser ce bloc. Sur un refus, le joueur
@@ -1567,7 +1921,7 @@ impl Server {
             _ => {}
         }
         if harvest {
-            loot.extend(items::drops(b, m, &mut self.rng));
+            loot.extend(items::drops_with(b, m, &mut self.rng, self.dig_ench));
         }
         for st in loot {
             self.drop_at_block(pos, st);
@@ -1657,6 +2011,8 @@ impl Server {
                     return self.open_window(id, Win::Chest(pos));
                 }
                 CRAFT => return self.open_window(id, Win::Table),
+                blocks::ENCHANT_TABLE => return self.open_window(id, Win::Enchant(pos)),
+                blocks::ANVIL => return self.open_window(id, Win::Anvil),
                 FURNACE => {
                     self.world.furnaces.entry(pos).or_default();
                     return self.open_window(id, Win::Furnace(pos));
@@ -2274,10 +2630,11 @@ impl Server {
                 }
                 // Souffle : dix secondes sous l'eau, puis la noyade.
                 c.inv_t -= DT;
+                c.shield_off = (c.shield_off - DT).max(0.0);
                 let head = [p.x.floor() as i32, (p.y + 1.62).floor() as i32, p.z.floor() as i32];
                 let before = c.air;
                 if self.world.get(head).is_some_and(|(b, _)| b == WATER) {
-                    c.air -= DT;
+                    c.air -= DT / (1.0 + c.worn(shared::ench::RESPIRATION) as f64);
                     if c.air <= -1.0 {
                         c.air = 0.0;
                         c.hp -= 2.0;
@@ -2296,7 +2653,7 @@ impl Server {
                 if (in_lava || p.y < -20.0) && c.hurt_t <= 0.0 {
                     c.hurt_t = 0.5;
                     // L'armure protege de la lave, pas du vide.
-                    c.hp -= if in_lava { c.absorb(4.0) } else { 4.0 };
+                    c.hp -= if in_lava { c.absorb(4.0, 0.0) } else { 4.0 };
                     c.stats_dirty = true;
                 }
             }
@@ -2319,6 +2676,7 @@ impl Server {
         c.hp = 0.0;
         c.stats_dirty = true;
         c.inv_dirty = true;
+        (c.xp, c.xp_dirty) = (0, true);
         let pos = Vec3::from(c.pos) + Vec3::Y * 0.8;
         let stuff: Vec<Stack> = c.inv.iter_mut().chain(c.armor.iter_mut()).filter_map(|s| s.take()).collect();
         println!("{} est mort", c.name);
@@ -2535,14 +2893,25 @@ impl Server {
         // Tenues qui ont change : tout le monde doit voir la nouvelle.
         let mut gear = Vec::new();
         for (id, c) in self.clients.iter_mut().filter(|(_, c)| c.ready) {
-            let worn = c.armor.map(|s| s.map_or(0, |st| st.id));
-            if worn != c.gear_sent {
-                c.gear_sent = worn;
-                gear.push(ServerMsg::Gear { id: *id, armor: worn });
+            let (worn, held) = (c.armor.map(|s| s.map_or(0, |st| st.id)), c.held().unwrap_or(0));
+            if worn != c.gear_sent || held != c.held_sent {
+                (c.gear_sent, c.held_sent) = (worn, held);
+                gear.push(ServerMsg::Gear { id: *id, armor: worn, held });
             }
         }
         for msg in gear {
             self.broadcast_all(msg, None);
+        }
+        for (id, points) in std::mem::take(&mut self.xp_due) {
+            self.give_xp(id, points);
+        }
+        // Devant un autel, ce qui change dans les cases change ce qu'il propose.
+        let altars: Vec<(u32, [i32; 3])> = self.clients.iter().filter(|(_, c)| c.inv_dirty).filter_map(|(id, c)| if let Win::Enchant(at) = c.window { Some((*id, at)) } else { None }).collect();
+        for (id, at) in altars {
+            let (offers, shelves) = self.altar_offers(id, at);
+            if let Some(c) = self.clients.get(&id) {
+                c.send(ServerMsg::Offers { offers, shelves });
+            }
         }
         for c in self.clients.values_mut() {
             if c.inv_dirty {
@@ -2552,8 +2921,13 @@ impl Server {
                     armor: c.armor.to_vec(),
                     cursor: c.cursor,
                     craft: c.craft.to_vec(),
-                    craft_out: craft::result(&c.craft),
+                    craft_out: if matches!(c.window, Win::Enchant(_) | Win::Anvil) { None } else { craft::result(&c.craft) },
                 });
+            }
+            if c.xp_dirty {
+                c.xp_dirty = false;
+                let (level, progress) = shared::ench::level_of(c.xp);
+                c.send(ServerMsg::Xp { level, progress });
             }
             if c.stats_dirty {
                 c.stats_dirty = false;
@@ -2589,9 +2963,9 @@ impl Server {
         // Un joueur mort reapparaitra au point de depart, en pleine forme.
         let save = if c.dead {
             let pos = c.home.unwrap_or(self.spawn);
-            PlayerSave { pos, hp: 20.0, hunger: 20.0, inv: c.inv.iter().chain(c.armor.iter()).copied().collect(), home: c.home, dim: (c.mode + 1) << 4 }
+            PlayerSave { pos, hp: 20.0, hunger: 20.0, inv: c.inv.iter().chain(c.armor.iter()).copied().collect(), home: c.home, dim: (c.mode + 1) << 4, xp: 0 }
         } else {
-            PlayerSave { pos: c.pos, hp: c.hp, hunger: c.hunger, inv: c.inv.iter().chain(c.armor.iter()).copied().collect(), home: c.home, dim: c.dim | (c.mode + 1) << 4 }
+            PlayerSave { pos: c.pos, hp: c.hp, hunger: c.hunger, inv: c.inv.iter().chain(c.armor.iter()).copied().collect(), home: c.home, dim: c.dim | (c.mode + 1) << 4, xp: c.xp }
         };
         match encode_player(&save) {
             Some(data) => {

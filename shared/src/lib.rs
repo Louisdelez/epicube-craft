@@ -5,6 +5,7 @@ pub mod chunk;
 pub mod commands;
 pub mod craft;
 pub mod gen;
+pub mod ench;
 pub mod items;
 pub mod mobs;
 pub mod mods;

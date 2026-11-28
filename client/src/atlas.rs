@@ -692,6 +692,47 @@ fn paint_blocks(img: &mut Img) {
         let d = pdist(u * 4.0, v * 4.0, 0.5, 0.5) / 4.0;
         over(c, rgb(250, 252, 240), cov(d - 0.016))
     });
+    // Autel d'enchantement : pierre sombre, plateau de laque rouge frappe d'un sceau dore.
+    img.tile(t::ENCHANT_TOP, |u, v| {
+        let mut c = rgb(140, 34, 40);
+        c = over(c, rgb(232, 185, 58), cov((pdist(u, v, 0.5, 0.5) - 0.24).abs() - 0.035));
+        c = over(c, rgb(232, 185, 58), cov(pdist(u, v, 0.5, 0.5) - 0.07));
+        over(c, rgb(40, 32, 52), frame(u, v, 0.09))
+    });
+    img.tile(t::ENCHANT_SIDE, |u, v| {
+        let mut c = if v < 0.3 { rgb(140, 34, 40) } else { rgb(44, 36, 58) };
+        if v >= 0.3 {
+            c = over(c, rgb(98, 74, 150), cov(((u * 4.0).fract() - 0.5).abs() / 4.0 - 0.012));
+        }
+        c = over(c, rgb(232, 185, 58), cov((v - 0.3).abs() - 0.03));
+        over(c, rgb(24, 20, 32), frame(u, v, 0.05))
+    });
+    // Bibliotheque : deux rayons de livres et de rouleaux dans un cadre de bois.
+    img.tile(t::BOOKSHELF, |u, v| {
+        let wood = planks(u, v);
+        if !(0.08..0.92).contains(&u) || v < 0.08 || v > 0.92 || (0.47..0.55).contains(&v) {
+            return wood;
+        }
+        let book = ((u - 0.08) / 0.84 * 7.0) as usize + if v > 0.5 { 7 } else { 0 };
+        let pal = [rgb(160, 44, 44), rgb(52, 92, 150), rgb(214, 196, 150), rgb(62, 120, 76), rgb(120, 60, 130), rgb(196, 140, 52), rgb(90, 70, 60)];
+        let mut c = pal[(book * 5 + 3) % 7];
+        let edge = ((u - 0.08) / 0.84 * 7.0).fract();
+        if edge < 0.14 {
+            c = rgb(28, 22, 22);
+        }
+        let row = if v > 0.5 { (v - 0.55) / 0.37 } else { (v - 0.08) / 0.39 };
+        if (0.2..0.3).contains(&row) {
+            c = over(c, rgb(240, 222, 160), 0.7);
+        }
+        c
+    });
+    // Enclume : acier sombre martele.
+    img.tile(t::ANVIL, |u, v| {
+        let mut c = rgb(70, 72, 84);
+        c = over(c, rgb(110, 114, 130), cov(((u - v) + 0.2).abs() / 1.414 - 0.04));
+        c = over(c, rgb(40, 42, 52), cov((v - 0.5).abs() - 0.04));
+        over(c, rgb(30, 30, 38), frame(u, v, 0.08))
+    });
     img.tile(t::IRON_BLOCK, |u, v| {
         let mut c = rgb(226, 230, 240);
         c = over(c, [1.0, 1.0, 1.0, 1.0], cov(((u + v) - 0.7).abs() / 1.414 - 0.05));

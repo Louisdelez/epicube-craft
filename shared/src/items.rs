@@ -4,21 +4,65 @@ use crate::blocks::*;
 use crate::util::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::ench::Ench;
 pub type Id = u16;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Stack {
     pub id: Id,
     pub n: u8,
     /// Usure restante des outils (0 pour le reste).
     pub dur: u16,
+    /// Enchantements portes.
+    pub ench: Ench,
 }
 
 pub type Slot = Option<Stack>;
 
 impl Stack {
     pub fn new(id: Id, n: u8) -> Stack {
-        Stack { id, n, dur: max_dur(id) }
+        Stack { id, n, dur: max_dur(id), ench: Ench::NONE }
+    }
+}
+
+/// Un objet s'ecrit en trois champs (objet, nombre, usure), comme il l'a toujours fait : les anciennes
+/// sauvegardes se relisent telles quelles. S'il est enchante, le bit fort du nombre l'annonce et ses
+/// enchantements suivent.
+const ENCHANTED: u8 = 0x80;
+
+impl Serialize for Stack {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let plain = self.ench.is_empty();
+        let mut t = s.serialize_tuple(if plain { 3 } else { 4 })?;
+        t.serialize_element(&self.id)?;
+        t.serialize_element(&(self.n | if plain { 0 } else { ENCHANTED }))?;
+        t.serialize_element(&self.dur)?;
+        if !plain {
+            t.serialize_element(&self.ench.0)?;
+        }
+        t.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Stack {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Stack, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Stack;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("un objet")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Stack, A::Error> {
+                let missing = || serde::de::Error::custom("objet tronque");
+                let id: Id = seq.next_element()?.ok_or_else(missing)?;
+                let n: u8 = seq.next_element()?.ok_or_else(missing)?;
+                let dur: u16 = seq.next_element()?.ok_or_else(missing)?;
+                let ench = if n & ENCHANTED != 0 { Ench(seq.next_element()?.ok_or_else(missing)?) } else { Ench::NONE };
+                Ok(Stack { id, n: n & !ENCHANTED, dur, ench })
+            }
+        }
+        d.deserialize_tuple(4, V)
     }
 }
 
@@ -477,12 +521,12 @@ pub fn hardness(b: B) -> f64 {
         GRASS | GRAVEL | COMPOSTER => 0.6,
         WOOL | NOTE | TARGET => 0.8,
         STONE | PISTON | STICKY_PISTON | PISTON_HEAD | KABOCHA | CRYSTAL | BASALT => 1.5,
-        LOG | PLANKS | COBBLE | BRICK | IRORI | COBWEB | BONE_BLOCK | VERMILION => 2.0,
+        LOG | PLANKS | COBBLE | BRICK | IRORI | COBWEB | BONE_BLOCK | VERMILION | BOOKSHELF => 2.0,
         CRAFT | CHEST => 2.5,
         DOOR | ZENITH_STONE | OBSERVER | HOPPER | SLATE => 3.0,
         GOLD_ORE | IRON_ORE | COAL_ORE | DIAMOND_ORE | VOLT_ORE => 3.0,
         FURNACE | DROPPER | SMOKER => 3.5,
-        IRON_BLOCK | ABYSS_PORTAL | ZENITH_PORTAL | VOLT_BLOCK | SPAWNER => 5.0,
+        IRON_BLOCK | ABYSS_PORTAL | ZENITH_PORTAL | VOLT_BLOCK | SPAWNER | ENCHANT_TABLE | ANVIL => 5.0,
         OBSIDIAN => 50.0,
         SATETSU => 30.0,
         GATEWAY => -1.0,
@@ -501,10 +545,10 @@ fn best_tool(b: B) -> Option<u8> {
         };
     }
     match b {
-        STONE | COBBLE | BRICK | FURNACE | GOLD_ORE | IRON_ORE | COAL_ORE | DIAMOND_ORE | VOLT_ORE | IRON_BLOCK
+        STONE | COBBLE | BRICK | FURNACE | GOLD_ORE | IRON_ORE | COAL_ORE | DIAMOND_ORE | VOLT_ORE | IRON_BLOCK | ENCHANT_TABLE | ANVIL
         | OBSIDIAN | ABYSS_ROCK | ZENITH_STONE | ICE | LAMP | PISTON | STICKY_PISTON | PISTON_HEAD | OBSERVER | VOLT_BLOCK
         | DROPPER | HOPPER | RAIL | POWERED_RAIL | DETECTOR_RAIL | SMOKER | SLATE | CRYSTAL | BASALT | STALACTITE | SPAWNER | SATETSU | BONE_BLOCK | CRIMSON_MOSS => Some(PICK),
-        LOG | PLANKS | CRAFT | CHEST | DOOR | BED | PLATE | SUNDIAL | NOTE | KABOCHA | BAMBOO | COMPOSTER | IRORI | VERMILION => Some(AXE),
+        LOG | PLANKS | CRAFT | CHEST | DOOR | BED | PLATE | SUNDIAL | NOTE | KABOCHA | BAMBOO | COMPOSTER | IRORI | VERMILION | BOOKSHELF => Some(AXE),
         DIRT | GRASS | SAND | GRAVEL | FARMLAND | SNOW | MOSS | GLOW_MOSS | SOUL_SAND => Some(SHOVEL),
         _ => None,
     }
@@ -530,11 +574,19 @@ pub fn can_harvest(b: B, held: Option<Id>) -> bool {
 
 /// Secondes necessaires pour casser le bloc, ou None s'il est incassable.
 pub fn break_time(b: B, held: Option<Id>) -> Option<f64> {
+    break_time_with(b, held, 0)
+}
+
+/// Temps de minage avec un outil enchante d'Efficacite au niveau `efficiency`.
+pub fn break_time_with(b: B, held: Option<Id>, efficiency: u8) -> Option<f64> {
     let h = hardness(b);
     if h < 0.0 {
         return None;
     }
-    let mult = match (held.and_then(tool), best_tool(b)) {
+    // L'efficacite ne sert qu'avec le bon outil : elle ajoute (niveau² + 1) a sa vitesse.
+    let right = matches!((held.and_then(tool), best_tool(b)), (Some((kind, _)), Some(best)) if kind == best);
+    let bonus = if right && efficiency > 0 { (efficiency as f64).powi(2) + 1.0 } else { 0.0 };
+    let mult = bonus + match (held.and_then(tool), best_tool(b)) {
         (Some((kind, tier)), Some(best)) if kind == best => [2.0, 4.0, 6.0, 8.0, 9.0][tier as usize],
         // Les ciseaux coupent net feuillage et fourrure ; une lame tranche le bambou.
         _ if held == Some(SHEARS) && matches!(b, LEAVES | CEDAR_LEAVES | MAPLE_LEAVES | WISTERIA | WOOL | TALLGRASS | COBWEB) => 15.0,
@@ -542,6 +594,39 @@ pub fn break_time(b: B, held: Option<Id>) -> Option<f64> {
         _ => 1.0,
     };
     Some(if can_harvest(b, held) { h * 1.5 / mult } else { h * 5.0 })
+}
+
+/// Objets laisses par un bloc casse avec un outil enchante : le Toucher de soie rend le bloc tel quel,
+/// la Fortune multiplie ce que donnent les minerais.
+pub fn drops_with(b: B, m: u8, rng: &mut Rng, ench: Ench) -> Vec<Stack> {
+    use crate::ench as e;
+    let silky = matches!(b, STONE | GRASS | GLASS | ICE | SNOW | LEAVES | CEDAR_LEAVES | MAPLE_LEAVES | WISTERIA | COAL_ORE | DIAMOND_ORE | VOLT_ORE | GOLD_ORE | IRON_ORE | CRYSTAL | GLOW_MOSS | BOOKSHELF | COBWEB)
+        || crate::mods::with(b, |_| ()).is_some();
+    if ench.level(e::SILK_TOUCH) > 0 && silky {
+        return vec![Stack::new(b as Id, 1)];
+    }
+    let mut out = drops(b, m, rng);
+    let fortune = ench.level(e::FORTUNE) as i32;
+    if fortune > 0 {
+        for st in out.iter_mut().filter(|st| st.id >= 256 && max_stack(st.id) > 1) {
+            // Un tirage sur (niveau + 2) : les deux premiers ne donnent rien de plus.
+            let times = (rng.range(0, fortune + 2) - 1).max(0) + 1;
+            st.n = (st.n as i32 * times).min(64) as u8;
+        }
+    }
+    out
+}
+
+/// Experience que donne un bloc mine (les minerais qui lachent leur gemme).
+pub fn block_xp(b: B, rng: &mut Rng) -> u32 {
+    match b {
+        COAL_ORE => rng.range(0, 3) as u32,
+        VOLT_ORE => rng.range(1, 6) as u32,
+        DIAMOND_ORE => rng.range(3, 8) as u32,
+        CRYSTAL => rng.range(1, 4) as u32,
+        SPAWNER => rng.range(15, 44) as u32,
+        _ => 0,
+    }
 }
 
 /// Objets laisses par un bloc casse.
@@ -811,6 +896,9 @@ pub fn name(id: Id) -> String {
             WISTERIA => "Glycine celeste",
             GATEWAY => "Porte celeste",
             VERMILION => "Bois laque vermillon",
+            ENCHANT_TABLE => "Autel d'enchantement",
+            BOOKSHELF => "Bibliotheque",
+            ANVIL => "Enclume",
             KABOCHA => "Kabocha",
             BAMBOO => "Bambou",
             COMPOSTER => "Bac a compost",

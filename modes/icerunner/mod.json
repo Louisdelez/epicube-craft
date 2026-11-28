@@ -1,0 +1,18 @@
+{
+  "id": "icerunner",
+  "name": "IceRunner",
+  "version": "1.0.0",
+  "description": "Deux îles, un plateau au centre : bâtissez un pont de glace et tenez le plateau jusqu'au bout du compteur.",
+  "author": "Epicube",
+  "mode": {
+    "name": "IceRunner",
+    "about": "Deux îles, un plateau au centre : bâtissez un pont de glace et tenez le plateau jusqu'au bout du compteur.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "glace"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

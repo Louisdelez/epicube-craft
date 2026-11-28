@@ -1,0 +1,18 @@
+{
+  "id": "domination",
+  "name": "Domination",
+  "version": "1.0.0",
+  "description": "Trois points à prendre et à tenir : chaque point tenu rapporte. La première équipe à 200 gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Domination",
+    "about": "Trois points à prendre et à tenir : chaque point tenu rapporte. La première équipe à 200 gagne.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "champ-de-bataille"
+    ],
+    "players": 10,
+    "game": "aventure"
+  }
+}

@@ -30,10 +30,10 @@ pub fn material(b: B) -> (&'static str, &'static str) {
         | TALLGRASS | FLOWER | CACTUS | SOY | TEA | STEM | KABOCHA | LOTUS => ("herbe", "terre"),
         SAND | GRAVEL | SOUL_SAND => ("sable", "terre"),
         SNOW => ("neige", "terre"),
-        PLANKS | LOG | CRAFT | CHEST | BAMBOO | COMPOSTER | NOTE | TARGET | DOOR | LEVER | TORCH | SIGTORCH | SUNDIAL | VERMILION | EXPLOSIVE
+        PLANKS | LOG | CRAFT | CHEST | BAMBOO | COMPOSTER | NOTE | TARGET | DOOR | LEVER | TORCH | SIGTORCH | SUNDIAL | VERMILION | BOOKSHELF | EXPLOSIVE
         | BONE_BLOCK | HOOK => ("bois", "bois"),
         GLASS | ICE | LAMP | CRYSTAL | ONIBI | ABYSS_PORTAL | ZENITH_PORTAL | GATEWAY => ("pierre", "verre"),
-        IRON_BLOCK | VOLT_BLOCK | SATETSU | PISTON | STICKY_PISTON | PISTON_HEAD | DROPPER | HOPPER | OBSERVER | RAIL | POWERED_RAIL
+        IRON_BLOCK | VOLT_BLOCK | SATETSU | ANVIL | PISTON | STICKY_PISTON | PISTON_HEAD | DROPPER | HOPPER | OBSERVER | RAIL | POWERED_RAIL
         | DETECTOR_RAIL | SPAWNER | REPEATER | COMPARATOR | BUTTON | PLATE => ("pierre", "metal"),
         WOOL | BED | COBWEB | TRIPWIRE | WIRE => ("sable", "tissu"),
         _ => ("pierre", "pierre"),
@@ -110,8 +110,12 @@ pub fn server(kind: u8, pitch: u8, at: Vec3) {
         kind::PISTON => audio::play_tuned("piston", Some(at), 0.9, if pitch == 0 { 1.0 } else { 0.8 }, audio::RANGE),
         kind::DROPPER => audio::play_at("distributeur", at, 0.8),
         kind::PARRY => audio::play_at("parade", at, 1.0),
+        kind::SHIELD_DOWN => audio::play_tuned("parade", Some(at), 1.0, 0.6, audio::RANGE),
         kind::CHEST_OPEN => audio::play_at("coffre_ouvre", at, 0.8),
         kind::CHEST_CLOSE => audio::play_at("coffre_ferme", at, 0.8),
+        kind::ENCHANT => audio::play_tuned("pieces", Some(at), 1.0, 0.7, audio::RANGE),
+        kind::ANVIL => audio::play_tuned("parade", Some(at), 1.0, 0.8, audio::RANGE),
+        kind::XP => audio::play_tuned("pieces", Some(at), 0.35, 1.6, audio::RANGE),
         _ => {}
     }
 }
@@ -122,7 +126,7 @@ mod tests {
 
     #[test]
     fn every_material_and_voice_has_its_sounds() {
-        for b in 1..=VERMILION {
+        for b in 1..=ANVIL {
             let (step, hit) = material(b);
             for name in [format!("pas_{step}"), format!("coup_{hit}"), format!("casse_{hit}")] {
                 assert!(SFX.contains(&name.as_str()), "{name} n'est pas dans la liste des bruitages");

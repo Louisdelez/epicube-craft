@@ -1,0 +1,18 @@
+{
+  "id": "totem",
+  "name": "Totem",
+  "version": "1.0.0",
+  "description": "Deux équipes, un totem chacune : abattez celui d'en face, bloc après bloc, avant qu'on n'abatte le vôtre.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Totem",
+    "about": "Deux équipes, un totem chacune : abattez celui d'en face, bloc après bloc, avant qu'on n'abatte le vôtre.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "totem"
+    ],
+    "players": 10,
+    "game": "aventure"
+  }
+}

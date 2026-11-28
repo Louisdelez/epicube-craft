@@ -1,0 +1,18 @@
+{
+  "id": "rush",
+  "name": "Rush",
+  "version": "1.0.0",
+  "description": "Deux îles, deux lits : bâtissez un pont, détruisez le lit d'en face, puis l'équipe qui ne peut plus revenir.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Rush",
+    "about": "Deux îles, deux lits : bâtissez un pont, détruisez le lit d'en face, puis l'équipe qui ne peut plus revenir.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "lits"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

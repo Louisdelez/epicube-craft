@@ -1,0 +1,18 @@
+{
+  "id": "catchthecow",
+  "name": "Catch The Cow",
+  "version": "1.0.0",
+  "description": "Deux bases, une vache par équipe : allez voler celle d'en face et ramenez-la chez vous, trois fois.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Catch The Cow",
+    "about": "Deux bases, une vache par équipe : allez voler celle d'en face et ramenez-la chez vous, trois fois.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "champ-de-bataille"
+    ],
+    "players": 10,
+    "game": "aventure"
+  }
+}

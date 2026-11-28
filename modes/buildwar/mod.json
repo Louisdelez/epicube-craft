@@ -1,0 +1,18 @@
+{
+  "id": "buildwar",
+  "name": "BuildWar",
+  "version": "1.0.0",
+  "description": "Un thème, une parcelle chacun, trois minutes pour bâtir : puis tout le monde note les constructions.",
+  "author": "Epicube",
+  "mode": {
+    "name": "BuildWar",
+    "about": "Un thème, une parcelle chacun, trois minutes pour bâtir : puis tout le monde note les constructions.",
+    "tags": [
+      "construction",
+      "creatif",
+      "concours"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

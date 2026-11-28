@@ -1,0 +1,18 @@
+{
+  "id": "fightclub",
+  "name": "FightClub",
+  "version": "1.0.0",
+  "description": "Une arène fermée, le même équipement pour tous : le premier à 15 victoires l'emporte.",
+  "author": "Epicube",
+  "mode": {
+    "name": "FightClub",
+    "about": "Une arène fermée, le même équipement pour tous : le premier à 15 victoires l'emporte.",
+    "tags": [
+      "pvp",
+      "arene",
+      "duel"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

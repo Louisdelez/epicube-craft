@@ -1,0 +1,18 @@
+{
+  "id": "chaos",
+  "name": "Chaos",
+  "version": "1.0.0",
+  "description": "Une arène où tout peut arriver : toutes les quinze secondes, un événement tombe sur tout le monde.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Chaos",
+    "about": "Une arène où tout peut arriver : toutes les quinze secondes, un événement tombe sur tout le monde.",
+    "tags": [
+      "pvp",
+      "mini-jeu",
+      "aleatoire"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

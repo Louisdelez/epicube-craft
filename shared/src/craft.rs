@@ -115,6 +115,10 @@ fn builtin() -> &'static [Recipe] {
         add(&mut v, &["B"], &[('B', BONE_BLOCK as Id)], FERTILIZER, 9);
         // Bois laque : des planches teintes a la fleur de higanbana.
         add(&mut v, &["PPP", "PFP", "PPP"], &[('P', p), ('F', FLOWER as Id)], VERMILION as Id, 8);
+        // Enchantements : l'autel, ses bibliotheques, et l'enclume.
+        add(&mut v, &[" C ", "DOD", "OOO"], &[('C', CRYSTAL as Id), ('D', DIAMOND), ('O', OBSIDIAN as Id)], ENCHANT_TABLE as Id, 1);
+        add(&mut v, &["PPP", "LLL", "PPP"], &[('P', p), ('L', LEATHER)], BOOKSHELF as Id, 1);
+        add(&mut v, &["BBB", " I ", "III"], &[('B', IRON_BLOCK as Id), ('I', IRON_INGOT)], ANVIL as Id, 1);
         for kind in [PICK, AXE, SHOVEL, SWORD, HOE] {
             add(&mut v, &["T", "X"], &[('T', TAMAHAGANE), ('X', tool_id(kind, 3))], tool_id(kind, 4), 1);
         }
@@ -201,7 +205,7 @@ pub fn result(grid: &[Slot]) -> Option<Stack> {
         let max = max_dur(a.id);
         if a.id == b.id && max > 0 && a.n == 1 && b.n == 1 {
             let dur = (a.dur as u32 + b.dur as u32 + max as u32 / 20).min(max as u32) as u16;
-            return Some(Stack { id: a.id, n: 1, dur });
+            return Some(Stack { id: a.id, n: 1, dur, ench: crate::ench::Ench::NONE });
         }
     }
     match_grid(grid).map(|r| Stack::new(r.out, r.n))
@@ -290,10 +294,10 @@ mod tests {
         // Deux pioches usees se fondent en une, avec 5 % de bonus ; jamais au-dela du neuf.
         let pick = tool_id(PICK, 2);
         let mut g: Vec<Slot> = vec![None; 9];
-        g[1] = Some(Stack { id: pick, n: 1, dur: 100 });
-        g[7] = Some(Stack { id: pick, n: 1, dur: 60 });
-        assert_eq!(result(&g), Some(Stack { id: pick, n: 1, dur: 100 + 60 + 251 / 20 }));
-        g[7] = Some(Stack { id: pick, n: 1, dur: 240 });
+        g[1] = Some(Stack { id: pick, n: 1, dur: 100, ench: crate::ench::Ench::NONE });
+        g[7] = Some(Stack { id: pick, n: 1, dur: 60, ench: crate::ench::Ench::NONE });
+        assert_eq!(result(&g), Some(Stack { id: pick, n: 1, dur: 100 + 60 + 251 / 20, ench: crate::ench::Ench::NONE }));
+        g[7] = Some(Stack { id: pick, n: 1, dur: 240, ench: crate::ench::Ench::NONE });
         assert_eq!(result(&g).map(|s| s.dur), Some(251));
         // Tamahagane sur une pioche de diamant.
         let g = grid([0, TAMAHAGANE, 0, 0, tool_id(PICK, 3), 0, 0, 0, 0]);

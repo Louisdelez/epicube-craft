@@ -134,6 +134,12 @@ pub const WISTERIA: B = 91;
 pub const GATEWAY: B = 92;
 /// Bois laque vermillon des torii et des sanctuaires.
 pub const VERMILION: B = 93;
+/// Autel d'enchantement : on y pose un objet et des cristaux, entoure de bibliotheques.
+pub const ENCHANT_TABLE: B = 94;
+/// Bibliotheque : chacune, pres d'un autel, en augmente la puissance.
+pub const BOOKSHELF: B = 95;
+/// Enclume : on y reunit deux objets semblables et leurs enchantements.
+pub const ANVIL: B = 96;
 
 /// Indices des tuiles dans l'atlas (32 tuiles de 16 px par ligne).
 pub mod t {
@@ -301,6 +307,10 @@ pub mod t {
     pub const VEIL: u16 = 411;
     pub const GATEWAY: u16 = 412;
     pub const VERMILION: u16 = 413;
+    pub const ENCHANT_TOP: u16 = 414;
+    pub const ENCHANT_SIDE: u16 = 415;
+    pub const BOOKSHELF: u16 = 416;
+    pub const ANVIL: u16 = 417;
     /// Objets des autres mondes : ITEM_REALM + (id - 372).
     pub const ITEM_REALM: u16 = 436;
     /// Pieces d'armure : trois rangees de huit tuiles, a droite des modeles de creatures.
@@ -527,6 +537,16 @@ pub fn tile(b: B, m: u8, f: usize) -> u16 {
         WISTERIA => t::WISTERIA,
         GATEWAY => t::GATEWAY,
         VERMILION => t::VERMILION,
+        ENCHANT_TABLE => match f {
+            2 => t::ENCHANT_TOP,
+            3 => t::OBSIDIAN,
+            _ => t::ENCHANT_SIDE,
+        },
+        BOOKSHELF => match f {
+            2 | 3 => t::PLANKS,
+            _ => t::BOOKSHELF,
+        },
+        ANVIL => t::ANVIL,
         COMPOSTER => {
             if f != 2 {
                 t::COMPOST_SIDE

@@ -65,6 +65,8 @@ pub fn available() -> Vec<Mode> {
             }
         }
     }
+    // Survie et Creatif d'abord, puis les autres par ordre alphabetique.
+    all[2..].sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     all
 }
 

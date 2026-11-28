@@ -1,0 +1,14 @@
+{
+  "id": "skywars",
+  "name": "Sky Wars",
+  "version": "1.0.0",
+  "description": "Chacun sur son île dans le ciel : on s'équipe dans les coffres, on rejoint le centre, le dernier debout gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Sky Wars",
+    "about": "Chacun sur son île dans le ciel : on s'équipe dans les coffres, on rejoint le centre, le dernier debout gagne.",
+    "tags": ["pvp", "mini-jeu", "iles"],
+    "players": 8,
+    "game": "aventure"
+  }
+}

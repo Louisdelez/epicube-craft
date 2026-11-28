@@ -1,0 +1,18 @@
+{
+  "id": "arrow",
+  "name": "Arrow",
+  "version": "1.0.0",
+  "description": "Un arc, une seule flèche qui tue d'un coup : chaque victoire en rend une. Le premier à 10 gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Arrow",
+    "about": "Un arc, une seule flèche qui tue d'un coup : chaque victoire en rend une. Le premier à 10 gagne.",
+    "tags": [
+      "pvp",
+      "arc",
+      "mini-jeu"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

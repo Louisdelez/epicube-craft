@@ -1,0 +1,18 @@
+{
+  "id": "epicsmash",
+  "name": "EpicSmash",
+  "version": "1.0.0",
+  "description": "Trois vies, des plateformes dans le vide et des coups qui envoient de plus en plus loin.",
+  "author": "Epicube",
+  "mode": {
+    "name": "EpicSmash",
+    "about": "Trois vies, des plateformes dans le vide et des coups qui envoient de plus en plus loin.",
+    "tags": [
+      "pvp",
+      "mini-jeu",
+      "ejection"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

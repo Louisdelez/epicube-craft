@@ -1,0 +1,15 @@
+{
+  "id": "faction",
+  "name": "PvP Faction",
+  "version": "1.0.0",
+  "description": "Fondez une faction, revendiquez des terres, bâtissez votre base et pillez celles des autres. Le monde est gardé.",
+  "author": "Epicube",
+  "mode": {
+    "name": "PvP Faction",
+    "about": "Fondez une faction, revendiquez des terres, bâtissez votre base et pillez celles des autres. Le monde est gardé.",
+    "tags": ["pvp", "faction", "survie"],
+    "players": 30,
+    "game": "survie",
+    "keep_world": true
+  }
+}

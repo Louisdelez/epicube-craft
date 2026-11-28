@@ -1,13 +1,13 @@
 {
   "id": "uhc",
   "name": "UHC",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Ultra Hardcore : la vie ne remonte pas toute seule, la zone rétrécit, le dernier en vie gagne.",
   "author": "Epicube",
   "mode": {
     "name": "UHC",
     "about": "La vie ne remonte pas toute seule, la zone rétrécit, le dernier en vie gagne.",
-    "tags": ["pvp", "survie", "chacun-pour-soi"],
+    "tags": ["pvp", "survie", "hardcore"],
     "players": 16,
     "game": "aventure"
   }

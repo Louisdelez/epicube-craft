@@ -6,6 +6,9 @@ use shared::mobs as mk;
 use shared::physics::d::{move_body, overlaps};
 
 pub struct Mob {
+    /// Dernier joueur a l'avoir frappee, et le niveau de Butin de son arme : a sa mort, il recoit
+    /// l'experience et le butin en plus.
+    pub slayer: Option<(u32, u8)>,
     pub id: u32,
     pub kind: u8,
     /// Creature de mod dont elle a l'apparence et les caracteristiques (0 : aucune).
@@ -142,6 +145,7 @@ impl Server {
             timer: 0.0,
             atk_cd: 1.0,
             hurt_cd: 0.0,
+            slayer: None,
             panic: 0.0,
             flee_from: Vec3::ZERO,
             love: 0.0,
@@ -498,6 +502,12 @@ impl Server {
                 m.dead = true;
                 wyrm_dead |= m.kind == mk::WYRM;
                 self.mod_deaths.push((self.dim, m.kind, m.skin, m.pos));
+                let looting = m.slayer.map_or(0, |s| s.1 as i32);
+                if let Some((who, _)) = m.slayer {
+                    // Une creature hostile rapporte 5 points d'experience, un animal de 1 a 3.
+                    let xp = if mk::hostile(m.kind) { 5 } else { self.rng.range(1, 4) as u32 };
+                    self.xp_due.push((who, xp));
+                }
                 // Une creature de mod laisse le butin que son mod a choisi.
                 let own = shared::mods::with_mob(m.skin, |d| d.loot.clone());
                 let stacks = match own {
@@ -507,6 +517,8 @@ impl Server {
                     }).collect(),
                     None => loot(m.kind, &mut self.rng),
                 };
+                // Butin : jusqu'a un objet de plus par niveau, pour chaque sorte de butin.
+                let stacks: Vec<Stack> = stacks.into_iter().map(|st: Stack| Stack { n: (st.n as i32 + self.rng.range(0, looting + 1)).min(64) as u8, ..st }).collect();
                 for st in stacks {
                     // Un animal tondu n'a plus de fourrure a donner.
                     if !(m.shorn > 0.0 && st.id == WOOL as u16) {
@@ -659,22 +671,46 @@ impl Server {
 
     /// Blesse un joueur (avec une courte invulnerabilite) et le repousse.
     pub(crate) fn hurt_player(&mut self, id: u32, dmg: f64, knock: Vec3) {
-        let Some(c) = self.clients.get_mut(&id) else { return };
+        self.strike(id, dmg, knock, false, shared::proto::blow::PLAIN);
+    }
+
+    /// Porte un coup a un joueur. `axe` : une hache abat le bouclier qui la pare ; `kind` : le genre
+    /// du coup, montre aux autres joueurs (voir `shared::proto::blow`).
+    pub(crate) fn strike(&mut self, id: u32, dmg: f64, knock: Vec3, axe: bool, kind: u8) -> Struck {
+        let Some(c) = self.clients.get_mut(&id) else { return Struck::Missed };
         // La difficulte regle la force des creatures, des projectiles et des explosions.
         let dmg = shared::rules::scale_damage(dmg, self.rules.difficulty);
-        if c.dead || shared::rules::invulnerable(c.mode) || c.inv_t > 0.0 || dmg <= 0.0 {
-            return;
+        if c.dead || shared::rules::invulnerable(c.mode) || dmg <= 0.0 {
+            return Struck::Missed;
         }
-        if self.shield_blocks(id, dmg, knock) {
-            return;
+        if c.inv_t > 0.0 {
+            // Encore invulnerable : seul un coup plus fort que le precedent passe, pour la difference, sans recul.
+            if dmg <= c.last_dmg + 1e-9 {
+                return Struck::Missed;
+            }
+            let more = dmg - c.last_dmg;
+            c.last_dmg = dmg;
+            c.hp -= c.absorb(more, 1.0);
+            c.stats_dirty = true;
+            return Struck::Hurt;
         }
-        let Some(c) = self.clients.get_mut(&id) else { return };
+        if self.shield_blocks(id, dmg, knock, axe) {
+            return Struck::Blocked;
+        }
+        let roll = self.rng.d();
+        let Some(c) = self.clients.get_mut(&id) else { return Struck::Missed };
         c.inv_t = 0.5;
+        c.last_dmg = dmg;
         // L'armure retire sa part du coup et amortit le recul.
         let steady = items::defense(&c.armor).2;
-        c.hp -= c.absorb(dmg);
+        c.hp -= c.absorb(dmg, roll);
         c.stats_dirty = true;
         c.send(ServerMsg::Knock { vel: (knock * (1.0 - steady).max(0.0)).to_array() });
+        let dim = c.dim;
+        for o in self.clients.values().filter(|o| o.ready && o.dim == dim) {
+            o.send(ServerMsg::PlayerHurt { id, kind });
+        }
+        Struck::Hurt
     }
 
     /// Detruit les blocs fragiles dans le rayon et blesse ce qui s'y trouve.
@@ -736,7 +772,13 @@ impl Server {
     }
 
     /// Coup porte par un joueur.
+    #[cfg(test)]
     pub(crate) fn attack(&mut self, id: u32, mob_id: u32) {
+        self.attack_with(id, mob_id, false);
+    }
+
+    /// Coup porte par un joueur a une creature. `sprint` : porte en courant.
+    pub(crate) fn attack_with(&mut self, id: u32, mob_id: u32, sprint: bool) {
         let now = Instant::now();
         let Some(c) = self.clients.get_mut(&id) else { return };
         // Temps ecoule depuis le coup precedent : il fixe la force de celui-ci.
@@ -765,38 +807,37 @@ impl Server {
         }
         let power = items::charge(elapsed, w.speed);
         let ready = power > 0.85;
+        // En courant, l'arme en garde : le coup repousse loin, mais n'est ni critique ni fauchant.
+        let sprint = sprint && ready;
         // Coup critique : porte en retombant, l'arme revenue en garde.
         let drop = c.fall_peak - c.pos[1];
         let falling = !c.on_ground && !c.fly && drop > 0.05;
-        let mut dmg = w.dmg * power * if falling && ready { 1.5 } else { 1.0 };
+        let ench = c.inv[c.sel].map_or(shared::ench::Ench::NONE, |st| st.ench);
+        let mut dmg = (w.dmg + crate::sharp(ench)) * power * if falling && ready && !sprint { 1.5 } else { 1.0 };
         if held == Some(items::TETSUBO) && falling {
             // La massue ecrase : 3 points par bloc de chute au-dela d'un bloc et demi, et le coup amortit la chute.
             dmg += 3.0 * (drop - 1.5).clamp(0.0, 6.0);
             c.fall_peak = c.pos[1];
         }
-        let sweeping = ready && c.on_ground && (matches!(held.and_then(items::tool), Some((items::SWORD, _))) || held == Some(items::NAGINATA));
+        let sweeping = ready && !sprint && c.on_ground && (matches!(held.and_then(items::tool), Some((items::SWORD, _))) || held == Some(items::NAGINATA));
         c.last_hit = now;
         c.exhaustion += 0.1;
         m.hp -= dmg;
         m.hurt_cd = 0.35;
         let from = Vec3::from(c.pos);
         let away = Vec3::new(m.pos.x - from.x, 0.0, m.pos.z - from.z).normalize_or_zero();
-        m.vel += (away * 7.0 + Vec3::Y * 5.0) * w.knock;
+        m.vel += (away * (if sprint { 12.5 } else { 7.0 } + 6.0 * ench.level(shared::ench::KNOCKBACK) as f64) + Vec3::Y * 5.0) * w.knock;
+        m.slayer = Some((id, ench.level(shared::ench::LOOTING)));
         m.panic = 4.0;
         m.flee_from = from;
         let hit_at = m.pos;
         // Une arme s'use a chaque coup, un outil deux fois plus vite.
-        if let Some(st) = c.inv[c.sel].as_mut().filter(|_| w.wear > 0) {
-            st.dur = st.dur.saturating_sub(w.wear);
-            if st.dur == 0 {
-                c.inv[c.sel] = None;
-            }
-            c.inv_dirty = true;
-        }
+        let roll = self.rng.d();
+        c.wear(w.wear, roll);
         let mut swept = Vec::new();
         if sweeping {
             // Fauchage : le katana effleure les voisins de la cible, la naginata les frappe a mi-force sur un large arc.
-            let (radius, side) = if held == Some(items::NAGINATA) { (2.6, dmg * 0.5) } else { (1.6, 1.0) };
+            let (radius, side) = if held == Some(items::NAGINATA) { (2.6, dmg * 0.5) } else { (1.6, crate::swept(ench, dmg)) };
             for o in self.mobs.iter_mut() {
                 if o.id != mob_id && o.kind != mk::CART && o.hurt_cd <= 0.0 && o.pos.distance(hit_at) < radius && o.pos.distance(from) < 6.0 {
                     o.hp -= side;

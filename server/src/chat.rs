@@ -195,6 +195,32 @@ impl Server {
                 let whom = self.clients.get(&who).map(|c| c.name.clone()).unwrap_or_default();
                 Ok(format!("{n} x {} pour {whom}", items::name(item)))
             }
+            "enchanter" => {
+                use shared::ench as e;
+                let all = || (0..e::COUNT).map(cmd::ench_word).collect::<Vec<_>>().join(", ");
+                let which = cmd::ench_from(args[0]).ok_or_else(|| format!("Enchantement inconnu : {}. Choix : {}", args[0], all()))?;
+                let max = e::DEFS[which as usize].max;
+                let level = match args.get(1) {
+                    Some(w) => w.parse::<u8>().ok().filter(|l| (1..=max).contains(l)).ok_or_else(|| format!("Niveau invalide : {w} (de 1 à {max})"))?,
+                    None => max,
+                };
+                let c = self.clients.get_mut(&id).ok_or("Joueur introuvable")?;
+                let st = c.inv[c.sel].as_mut().ok_or("Tenez l'objet à enchanter")?;
+                if !e::fits(which, st.id) {
+                    return Err(format!("« {} » ne va pas sur {}", e::DEFS[which as usize].name, items::name(st.id)));
+                }
+                st.ench = st.ench.with(which, level);
+                c.inv_dirty = true;
+                Ok(format!("{} : {}", items::name(st.id), e::label(which, level)))
+            }
+            "xp" => {
+                let levels = args[0].parse::<u32>().ok().filter(|n| (1..=100).contains(n)).ok_or_else(|| format!("Nombre de niveaux invalide : {} (de 1 à 100)", args[0]))?;
+                let who = self.target(id, args.get(1))?;
+                let c = self.clients.get_mut(&who).ok_or("Joueur introuvable")?;
+                let (level, _) = shared::ench::level_of(c.xp);
+                (c.xp, c.xp_dirty) = (shared::ench::points_for(level + levels), true);
+                Ok(format!("{} est au niveau {}", c.name, level + levels))
+            }
             "vider" => {
                 let who = self.target(id, args.first())?;
                 let c = self.clients.get_mut(&who).ok_or("Joueur introuvable")?;
@@ -425,11 +451,17 @@ mod tests {
                 "heure" => " jour",
                 "tp" => " 0 300 0",
                 "donner" => " diamant",
+                "enchanter" => " solidite 2",
+                "xp" => " 5",
                 "invoquer" => " cerf",
                 "dire" | "moi" => " bonjour",
                 "msg" => " Ren bonjour",
                 _ => "",
             };
+            // On n'enchante que ce que l'on tient.
+            if let Some(c) = srv.clients.get_mut(&1) {
+                c.inv[c.sel] = Some(Stack::new(items::tool_id(items::PICK, 2), 1));
+            }
             srv.chat(1, format!("/{}{args}", spec.name));
             let out = lines(&rx);
             assert!(out.iter().all(|l| l.1 != chat::ERROR && !l.0.contains("pas encore disponible")), "/{} : {out:?}", spec.name);

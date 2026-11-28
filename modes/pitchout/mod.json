@@ -1,0 +1,18 @@
+{
+  "id": "pitchout",
+  "name": "PitchOut",
+  "version": "1.0.0",
+  "description": "Une plateforme dans le ciel, cinq vies et un bâton qui envoie valser : éjectez tout le monde.",
+  "author": "Epicube",
+  "mode": {
+    "name": "PitchOut",
+    "about": "Une plateforme dans le ciel, cinq vies et un bâton qui envoie valser : éjectez tout le monde.",
+    "tags": [
+      "pvp",
+      "mini-jeu",
+      "ejection"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

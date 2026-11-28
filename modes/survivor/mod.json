@@ -1,0 +1,18 @@
+{
+  "id": "survivor",
+  "name": "Survivor",
+  "version": "1.0.0",
+  "description": "Ensemble contre les oni : ils reviennent par manches, toujours plus nombreux. Tenez dix manches.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Survivor",
+    "about": "Ensemble contre les oni : ils reviennent par manches, toujours plus nombreux. Tenez dix manches.",
+    "tags": [
+      "cooperation",
+      "survie",
+      "manches"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

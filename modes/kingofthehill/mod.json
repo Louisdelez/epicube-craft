@@ -1,0 +1,18 @@
+{
+  "id": "kingofthehill",
+  "name": "King Of The Hill",
+  "version": "1.0.0",
+  "description": "Une colline au milieu de l'arène : seul à son sommet, on marque. Le premier à 60 points gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "King Of The Hill",
+    "about": "Une colline au milieu de l'arène : seul à son sommet, on marque. Le premier à 60 points gagne.",
+    "tags": [
+      "pvp",
+      "mini-jeu",
+      "colline"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

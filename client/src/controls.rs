@@ -37,7 +37,7 @@ const TABLE: [(&str, &str, KeyCode); COUNT] = [
     ("droite", "Aller à droite", KeyCode::KeyD),
     ("sauter", "Sauter, nager, monter en vol", KeyCode::Space),
     ("courir", "Courir", KeyCode::ShiftLeft),
-    ("descendre", "Descendre en vol", KeyCode::ControlLeft),
+    ("descendre", "S'accroupir, descendre en vol", KeyCode::ControlLeft),
     ("inventaire", "Inventaire", KeyCode::KeyE),
     ("jeter", "Jeter l'objet tenu", KeyCode::KeyQ),
     ("chat", "Ouvrir le chat", KeyCode::KeyT),

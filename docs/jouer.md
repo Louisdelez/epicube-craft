@@ -34,6 +34,8 @@ Toutes ces touches se changent dans **Paramètres → Contrôles** : on clique s
 | Menu pause, fermer une fenêtre | `Échap` |
 | Réapparaître après la mort | `Entrée` |
 
+**S'accroupir** (`Ctrl` gauche maintenu) : on avance à petits pas sans jamais tomber d'un bord, et le regard s'abaisse. Les autres joueurs voient la posture, comme ils voient l'objet tenu, les coups de bras, le bouclier levé, l'arc tendu, la course et les sauts.
+
 En vol (créatif et spectateur) : `Espace` monte, `Ctrl` gauche descend, `Maj` accélère. En créatif, deux appuis rapides sur `Espace` font décoller ou atterrir.
 
 ### Armes
@@ -42,6 +44,51 @@ En vol (créatif et spectateur) : `Espace` monte, `Ctrl` gauche descend, `Maj` a
 - **Lance yari, kunai** : clic droit pour lancer.
 - **Bouclier tate** : maintenir le clic droit pour parer ce qui vient de face.
 - Une arme frappe à pleine force quand la jauge sous le viseur est pleine ; frapper trop vite ne fait qu'une fraction des dégâts.
+
+### Combat
+
+Les mêmes règles valent contre les créatures et, quand la partie l'autorise, entre joueurs.
+
+- **Retour en garde** : après un coup, un coup dans le vide ou un changement d'arme, l'arme met un moment à revenir en garde (la jauge sous le viseur). Un katana frappe vite, une hache lentement mais fort.
+- **Coup critique** : porté en retombant d'un saut, l'arme en garde et sans courir, il fait une fois et demie les dégâts.
+- **Coup en courant** : il repousse bien plus loin, mais n'est jamais critique.
+- **Fauchage** : un katana en garde, les pieds au sol et sans courir, effleure aussi les voisins de la cible.
+- **Recul** : un coup soulève qui a les pieds au sol ; en l'air, il ne fait que pousser, ce qui permet d'enchaîner.
+- **Invulnérabilité** : une demi-seconde après un coup reçu ; seul un coup plus fort passe, pour la différence.
+- **Bouclier** : il pare un quart de seconde après avoir été levé, et renvoie un peu l'attaquant. Une **hache** l'abat : cinq secondes sans pouvoir le relever.
+- **Armure** : elle retire une part des dégâts et amortit le recul ; elle s'use à chaque coup.
+
+### Expérience et enchantements
+
+Vaincre une créature ou miner un minerai (charbon, reiseki, diamant, cristal) donne de l'**expérience** : la barre verte au-dessus de la barre rapide, et le niveau en son milieu. La mort l'emporte.
+
+**L'autel d'enchantement** (un cristal de roche, deux diamants, quatre obsidiennes) enchante un objet encore vierge. On y pose l'objet et des cristaux de roche ; il propose trois offres :
+
+- chaque offre affiche le niveau qu'il faut avoir atteint, et coûte 1, 2 ou 3 niveaux et autant de cristaux selon son rang ;
+- elle montre un enchantement ; d'autres peuvent venir avec, d'autant plus que l'offre est chère ;
+- des **bibliothèques** (six planches, trois cuirs) posées à deux blocs de l'autel, à sa hauteur ou juste au-dessus, rendent les offres plus fortes : quinze suffisent pour les offres de niveau 30.
+
+**L'enclume** (trois blocs de fer, quatre lingots) réunit deux objets pareils : leur usure s'ajoute, leurs enchantements se combinent, et deux niveaux égaux donnent le suivant. Elle coûte un niveau par niveau d'enchantement obtenu, plus un.
+
+| Enchantement | Sur | Effet |
+|---|---|---|
+| Tranchant I-V | lames, haches | plus de dégâts |
+| Recul I-II | lames, haches | repousse plus loin |
+| Butin I-III | lames, haches | les créatures laissent plus de butin |
+| Fauchage I-III | katana, naginata | le fauchage frappe plus fort les voisins |
+| Efficacité I-V | outils | mine plus vite |
+| Fortune I-III | outils | les minerais donnent plus |
+| Toucher de soie | outils | le bloc tombe tel quel |
+| Solidité I-III | tout ce qui s'use | s'use moins souvent |
+| Raccommodage | tout ce qui s'use | l'expérience gagnée répare l'objet (jamais proposé par l'autel) |
+| Protection I-IV | armure | 4 % de dégâts en moins par niveau porté |
+| Chute amortie I-IV | sandales | chutes moins dures |
+| Épines I-III | cuirasse | peut blesser qui vous frappe |
+| Apnée I-III | casque | plus de souffle sous l'eau |
+| Puissance I-V | arc | flèches plus fortes |
+| Infinité | arc | les flèches ne sont pas dépensées |
+
+Fortune et Toucher de soie ne vont pas ensemble, ni Infinité et Raccommodage. Un objet enchanté luit dans l'inventaire, et son infobulle liste ses enchantements.
 
 ### Inventaire
 

@@ -42,6 +42,8 @@ pub const COMMANDS: &[Spec] = &[
     Spec { name: "heure", alias: "time", args: &[(Arg::Time, true)], help: "Règle l'heure du jour", cheat: true },
     Spec { name: "tp", alias: "teleport", args: &[(Arg::Place, true)], help: "Téléporte vers des coordonnées ou vers un joueur", cheat: true },
     Spec { name: "donner", alias: "give", args: &[(Arg::Item, true), (Arg::Count, false), (Arg::Player, false)], help: "Donne des objets", cheat: true },
+    Spec { name: "enchanter", alias: "enchant", args: &[(Arg::Text, true)], help: "Enchante l'objet tenu : /enchanter tranchant 3", cheat: true },
+    Spec { name: "xp", alias: "experience", args: &[(Arg::Count, true), (Arg::Player, false)], help: "Donne des niveaux d'expérience", cheat: true },
     Spec { name: "vider", alias: "clear", args: &[(Arg::Player, false)], help: "Vide l'inventaire", cheat: true },
     Spec { name: "tuer", alias: "kill", args: &[(Arg::Player, false)], help: "Tue un joueur (soi-même par défaut)", cheat: true },
     Spec { name: "invoquer", alias: "summon", args: &[(Arg::Mob, true)], help: "Fait apparaître une créature devant soi", cheat: true },
@@ -146,6 +148,16 @@ pub fn all_items() -> Vec<Id> {
 }
 
 /// Objet designe par ce mot (son nom, ou son numero).
+/// Mot qui designe un enchantement dans une commande : « toucher_de_soie ».
+pub fn ench_word(e: u8) -> String {
+    plain(crate::ench::DEFS[e as usize].name).replace(' ', "_")
+}
+
+pub fn ench_from(word: &str) -> Option<u8> {
+    let word = plain(word);
+    (0..crate::ench::COUNT).find(|e| ench_word(*e) == word)
+}
+
 pub fn item_from(word: &str) -> Option<Id> {
     let word = plain(word);
     let all = all_items();

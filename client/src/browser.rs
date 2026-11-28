@@ -48,6 +48,8 @@ pub struct Browser {
     pub query: String,
     pub mode_query: String,
     pub mode: String,
+    /// Premier mode montre dans la liste de gauche : elle defile a la molette.
+    pub mode_scroll: usize,
     pub page: usize,
     /// Jeton du compte du joueur : l'annuaire lui dit quelles parties privees lui sont ouvertes.
     token: Option<String>,
@@ -149,6 +151,7 @@ impl Browser {
             query: String::new(),
             mode_query: String::new(),
             mode: String::new(),
+            mode_scroll: 0,
             page: 0,
             token,
             asked: Instant::now(),

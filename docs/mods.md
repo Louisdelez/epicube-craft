@@ -90,6 +90,7 @@ Un exemple complet : [`exemples/mods/bienvenue`](../exemples/mods/bienvenue).
 | `place` | le joueur, x, y, z, le bloc | le bloc n'est pas posé |
 | `interact` | le joueur, x, y, z, le bloc (clic droit sur un bloc) | le jeu n'en fait rien |
 | `use` | le joueur, l'objet tenu (clic droit) | le jeu n'en fait rien |
+| `hit` | le joueur qui frappe, le pseudo de celui qu'il frappe | le coup n'est pas porté |
 | `death` | le joueur, le pseudo de celui qui l'a tué (ou vide) | |
 | `respawn` | le joueur | |
 | `mob_death` | la créature, x, y, z | |
@@ -117,10 +118,11 @@ Un exemple complet : [`exemples/mods/bienvenue`](../exemples/mods/bienvenue).
 | `world.sound(son, x, y, z, volume)` | bruitage entendu autour d'un endroit |
 | `world.top(x, z)` | hauteur du bloc le plus haut de la colonne |
 | `world.fill(x1, y1, z1, x2, y2, z2, bloc)` | remplit un pavé (200 000 blocs au plus) |
+| `world.chest(x, y, z, objet, nombre)` | range des objets dans le coffre posé là (il est posé s'il n'y en a pas), dans une case libre au hasard |
 | `store.get(clé)`, `store.set(clé, valeur)` | mémoire du mod, enregistrée avec le monde |
 | `print(...)` | écrit dans le journal du serveur |
 
-Un joueur : `player.name`, `player.id`, `player:tell(texte)`, `player:give(objet, nombre)`, `player:pos()`, `player:teleport(x, y, z)`, `player:health()`, `player:set_health(vie)`, `player:mode()`, `player:kick(raison)`, `player:send(nom, texte)` (vers le script d'écran), `player:online()`, `player:count(objet)`, `player:take(objet, nombre)`, `player:held()`, `player:set_mode(mode)`, `player:hunger()`, `player:set_hunger(faim)`, `player:dimension()`, `player:sound(son, volume)`, `player:damage(points)`, `player:set_home(x, y, z)` (où il revient après sa mort), `player:clear()` (vide son inventaire), `player:info(texte)` (message au centre de son écran).
+Un joueur : `player.name`, `player.id`, `player:tell(texte)`, `player:give(objet, nombre)`, `player:pos()`, `player:teleport(x, y, z)`, `player:health()`, `player:set_health(vie)`, `player:mode()`, `player:kick(raison)`, `player:send(nom, texte)` (vers le script d'écran), `player:online()`, `player:count(objet)`, `player:take(objet, nombre)`, `player:held()`, `player:set_mode(mode)`, `player:hunger()`, `player:set_hunger(faim)`, `player:dimension()`, `player:sound(son, volume)`, `player:damage(points)`, `player:set_home(x, y, z)` (où il revient après sa mort), `player:clear()` (vide son inventaire), `player:info(texte)` (message au centre de son écran), `player:enchant(enchantement, niveau)` (enchante l'objet qu'il tient : `tranchant`, `solidite`...).
 
 Le monde se charge de lui-même là où un script lit ou écrit : un mod peut bâtir une arène loin de tout joueur.
 
@@ -275,6 +277,24 @@ Un mode de jeu (UHC, Bed Wars...) est un mod dont le `mod.json` porte une rubriq
 | `players` | nombre de places proposé |
 | `game` | mode donné aux joueurs qui arrivent : `survie`, `creatif`, `aventure` ou `spectateur` |
 | `keep_world` | `true` : le monde est gardé d'une partie à l'autre ; sinon chaque partie commence dans un monde neuf |
+
+### La base d'un mini-jeu
+
+`minigame{...}` tient pour vous l'attente des joueurs, le compte à rebours, les équipes, qui est encore en jeu, l'état affiché à l'écran, la commande `/<id> demarrer` et la victoire. Le jeu n'écrit que ce qui lui est propre :
+
+```lua
+minigame{ id = "pitchout", name = "PitchOut", min = 2, void = 14,   -- void : tomber de 14 blocs sous l'arène tue
+  teams = { "Rouge", "Bleue" },                 -- facultatif : sans équipes, chacun pour soi
+  build = function(g) world.fill(g.ox - 9, g.oy, g.oz - 9, g.ox + 9, g.oy, g.oz + 9, "pierre") end,
+  spawn = function(g, p, i, team) p:teleport(g.ox + 0.5, g.oy + 1.2, g.oz + 0.5) end,
+  second = function(g, clock) end,              -- chaque seconde de la partie ; tick = à chaque tick
+  death = function(g, p, killer) return true end,  -- vrai : le joueur reste en jeu et reviendra
+  respawn = function(g, p) end,
+  status = function(g, p) return g.count .. " en jeu" end }
+```
+
+`g` donne `g.ox, g.oy, g.oz` (le centre de l'arène), `g.clock`, `g.count`, `g.kills`, `g:players()`, `g:alive(p)`, `g:team(p)`, `g:mates(n)`, `g:ring(i, rayon)`, `g:roll(n)`, `g:out(p)` et `g:win(texte)`. Autres réglages : `countdown`, `height`, `mode`, `pvp = false`, `endless = true` (pas de victoire au dernier debout), `limit` et `timeout`, `places`. Les jeux du dossier `modes` en sont autant d'exemples.
+
 
 Le script du mode fait le reste avec les fonctions de cette page : attendre les joueurs, lancer la partie, fixer les règles (`rules.set`), bâtir une arène (`world.fill`), compter les survivants. Les deux modes livrés avec le jeu servent d'exemples : [`modes/uhc`](../modes/uhc) et [`modes/bedwars`](../modes/bedwars), chacun en un seul fichier Lua.
 

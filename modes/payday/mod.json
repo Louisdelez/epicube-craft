@@ -1,0 +1,18 @@
+{
+  "id": "payday",
+  "name": "PayDay",
+  "version": "1.0.0",
+  "description": "Braqueurs contre policiers : videz les coffres de la banque et rapportez dix lingots au fourgon avant la fin.",
+  "author": "Epicube",
+  "mode": {
+    "name": "PayDay",
+    "about": "Braqueurs contre policiers : videz les coffres de la banque et rapportez dix lingots au fourgon avant la fin.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "braquage"
+    ],
+    "players": 10,
+    "game": "aventure"
+  }
+}

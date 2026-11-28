@@ -1,0 +1,18 @@
+{
+  "id": "uhctheme",
+  "name": "UHC Theme",
+  "version": "1.0.0",
+  "description": "Un UHC où un thème tiré au sort change la donne : archers, colosses, mineurs, duel à la pomme…",
+  "author": "Epicube",
+  "mode": {
+    "name": "UHC Theme",
+    "about": "Un UHC où un thème tiré au sort change la donne : archers, colosses, mineurs, duel à la pomme…",
+    "tags": [
+      "pvp",
+      "survie",
+      "theme"
+    ],
+    "players": 16,
+    "game": "aventure"
+  }
+}

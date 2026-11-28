@@ -1,0 +1,18 @@
+{
+  "id": "fallenkingdoms",
+  "name": "Fallen Kingdoms",
+  "version": "1.0.0",
+  "description": "Chaque équipe bâtit son royaume et défend son cœur ; les assauts ouverts, on va détruire ceux des autres.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Fallen Kingdoms",
+    "about": "Chaque équipe bâtit son royaume et défend son cœur ; les assauts ouverts, on va détruire ceux des autres.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "survie"
+    ],
+    "players": 16,
+    "game": "survie"
+  }
+}

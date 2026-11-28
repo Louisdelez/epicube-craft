@@ -3,7 +3,7 @@ use crate::items::Slot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Nature d'une ligne de chat.
 pub mod chat {
@@ -31,6 +31,35 @@ pub mod sound {
     pub const PARRY: u8 = 6;
     pub const CHEST_OPEN: u8 = 7;
     pub const CHEST_CLOSE: u8 = 8;
+    /// Un bouclier abattu par une hache.
+    pub const SHIELD_DOWN: u8 = 9;
+    pub const ENCHANT: u8 = 10;
+    pub const ANVIL: u8 = 11;
+    /// De l'experience gagnee.
+    pub const XP: u8 = 12;
+}
+/// Gestes et postures d'un joueur, montres aux autres.
+pub mod act {
+    /// Un coup de bras : frapper, miner, poser.
+    pub const SWING: u8 = 0;
+    pub const GUARD_UP: u8 = 1;
+    pub const GUARD_DOWN: u8 = 2;
+    /// Tend l'arc, puis le relache.
+    pub const AIM: u8 = 3;
+    pub const RELEASE: u8 = 4;
+    pub const SNEAK: u8 = 5;
+    pub const STAND: u8 = 6;
+}
+
+/// Genres de coup recus par un joueur.
+pub mod blow {
+    pub const PLAIN: u8 = 0;
+    /// Coup critique, porte en retombant.
+    pub const CRIT: u8 = 1;
+    /// Effleure par le fauchage d'une lame.
+    pub const SWEEP: u8 = 2;
+    /// Coup porte en courant : il repousse loin.
+    pub const SPRINT: u8 = 3;
 }
 const MAX_FRAME: usize = 4 << 20;
 
@@ -57,6 +86,10 @@ pub enum WindowKind {
     Chest,
     /// Echange avec un villageois.
     Trade,
+    /// Autel d'enchantement : l'objet dans la case d'artisanat 0, les cristaux dans la 1.
+    Enchant,
+    /// Enclume : les deux objets a reunir dans les cases d'artisanat 0 et 1.
+    Anvil,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,10 +113,21 @@ pub enum ClientMsg {
     /// Fabrique directement une recette a partir de l'inventaire.
     Craft { recipe: u16 },
     DropItem { all: bool },
-    /// Coup porte a une creature.
-    Attack { id: u32 },
+    /// Coup porte a une creature. `sprint` : porte en courant, il repousse plus loin.
+    Attack { id: u32, sprint: bool },
     /// Coup porte a un autre joueur (si la partie autorise le combat entre joueurs).
-    Hit { id: u32 },
+    Hit { id: u32, sprint: bool },
+    /// Coup dans le vide ou sur un bloc : l'arme doit quand meme revenir en garde.
+    /// `miss` : dans le vide ; sinon ce n'est qu'un geste (miner, poser), que les autres voient.
+    Swing { miss: bool },
+    /// Tend ou relache la corde de l'arc : les autres joueurs voient le geste.
+    Aim(bool),
+    /// S'accroupit ou se releve.
+    Sneak(bool),
+    /// Accepte l'offre numero `index` de l'autel d'enchantement.
+    Enchant { index: u8 },
+    /// Reunit sur l'enclume les deux objets poses.
+    Forge,
     /// Clic droit sur une creature (la nourrir).
     Interact { id: u32 },
     Respawn,
@@ -140,8 +184,8 @@ pub enum ServerMsg {
     Roster { name: String, here: bool },
     /// Mode de jeu du joueur et regles du monde ; envoye a l'arrivee et a chaque changement.
     Rules { mode: u8, rules: crate::rules::Rules },
-    /// Tenue d'un joueur, pour que les autres le voient en armure (0 = rien).
-    Gear { id: u32, armor: [u16; 4] },
+    /// Tenue d'un joueur, pour que les autres le voient en armure, et l'objet qu'il tient (0 = rien).
+    Gear { id: u32, armor: [u16; 4], held: u16 },
     Window { kind: WindowKind },
     /// Contenu du conteneur ouvert ; `progress` = (flamme, cuisson) du four, de 0 a 1.
     Container { slots: Vec<Slot>, progress: [f64; 2] },
@@ -185,6 +229,16 @@ pub enum ServerMsg {
     ModMsg { mod_id: String, name: String, data: String },    /// Bruitage demande par un mod : un son du jeu, ou « mod:fichier ». `pos` : l'endroit d'ou il vient,
     /// ou None s'il s'entend partout.
     Play { name: String, pos: Option<[f64; 3]>, volume: f32 },
+    /// Un joueur vient d'encaisser un coup ; `kind` est l'une des constantes du module `blow`.
+    PlayerHurt { id: u32, kind: u8 },
+    /// Le bouclier du joueur est abattu par une hache : il ne pare plus pendant `secs` secondes.
+    ShieldDown { secs: f32 },
+    /// Geste ou posture d'un autre joueur ; `act` est l'une des constantes du module `act`.
+    PlayerAct { id: u32, act: u8 },
+    /// Experience du joueur : son niveau, et la part du suivant deja acquise (0 a 1).
+    Xp { level: u32, progress: f32 },
+    /// Ce que propose l'autel d'enchantement ouvert, entoure de `shelves` bibliotheques.
+    Offers { offers: Vec<crate::ench::Offer>, shelves: u8 },
 }
 
 pub fn write_msg<W: Write, T: Serialize>(w: &mut W, msg: &T) -> io::Result<()> {

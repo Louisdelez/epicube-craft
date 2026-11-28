@@ -650,12 +650,59 @@ fn api(mod_id: &str, reg: &Rc<RefCell<Reg>>) -> Api {
                 }
                 let per = items::max_stack(item) as u32;
                 let mut left = (num(a, 2).unwrap_or(1.0).max(1.0) as u32).min(2304);
+                // Un objet donne deja enchante : player:give(objet, 1, "recul", 2).
+                let mut ench = shared::ench::Ench::NONE;
+                if let Ok(word) = text(a, 3) {
+                    let which = cmd::ench_from(word).ok_or_else(|| format!("enchantement inconnu : {word}"))?;
+                    if shared::ench::fits(which, item) {
+                        ench = ench.with(which, (num(a, 4).unwrap_or(1.0).max(1.0) as u8).min(15));
+                    }
+                }
                 while left > 0 {
                     let take = left.min(per);
-                    s.give(who, Stack::new(item, take as u8));
+                    s.give(who, Stack { ench, ..Stack::new(item, take as u8) });
                     left -= take;
                 }
                 Ok(vec![Val::Bool(true)])
+            }),
+            op::CHEST => {
+                let p = cell(a)?;
+                let word = text(a, 3)?;
+                let item = item_from(word).ok_or_else(|| format!("objet inconnu : {word}"))?;
+                let n = (num(a, 4).unwrap_or(1.0).max(1.0) as u32).min(items::max_stack(item) as u32) as u8;
+                srv(|s| {
+                    s.world.ensure((p[0] >> 4, p[2] >> 4));
+                    if s.world.get(p).map(|c| c.0) != Some(blocks::CHEST) {
+                        s.world.set(p, blocks::CHEST, 0);
+                        s.world.chests.insert(p, vec![None; 27]);
+                    }
+                    // Dans une case libre prise au hasard, comme un butin qu'on decouvre.
+                    let free: Vec<usize> = s.world.chests.entry(p).or_insert_with(|| vec![None; 27]).iter().enumerate().filter(|(_, c)| c.is_none()).map(|(i, _)| i).collect();
+                    if free.is_empty() {
+                        return Ok(vec![Val::Bool(false)]);
+                    }
+                    let slot = free[s.rng.range(0, free.len() as i32) as usize];
+                    if let Some(chest) = s.world.chests.get_mut(&p) {
+                        chest[slot] = Some(Stack::new(item, n));
+                    }
+                    s.cont_dirty.insert(p);
+                    Ok(vec![Val::Bool(true)])
+                })
+            }
+            op::ENCHANT => srv(|s| {
+                let word = text(a, 1)?;
+                let which = cmd::ench_from(word).ok_or_else(|| format!("enchantement inconnu : {word}"))?;
+                let level = (num(a, 2).unwrap_or(1.0).max(1.0) as u8).min(shared::ench::DEFS[which as usize].max);
+                let Some(c) = s.clients.get_mut(&pid(a)?) else { return Ok(vec![Val::Bool(false)]) };
+                let done = match c.inv[c.sel].as_mut() {
+                    Some(st) if shared::ench::fits(which, st.id) => {
+                        st.ench = st.ench.with(which, level);
+                        true
+                    }
+                    _ => false,
+                };
+                c.inv_dirty |= done;
+                Ok(vec![Val::Bool(done)])
             }),
             op::HEALTH => srv(|s| Ok(s.clients.get(&pid(a)?).map(|c| Val::Num(c.hp)).into_iter().collect())),
             op::SET_HEALTH => srv(|s| {
@@ -734,10 +781,14 @@ fn prelude() -> String {
         ("SET_HUNGER", op::SET_HUNGER), ("SPAWN", op::SPAWN), ("DROP", op::DROP), ("EXPLODE", op::EXPLODE), ("DIMENSION", op::DIMENSION),
         ("MOB", op::MOB), ("SOUND", op::SOUND),
         ("RULE", op::RULE), ("DAMAGE", op::DAMAGE), ("SET_HOME", op::SET_HOME), ("CLEAR", op::CLEAR), ("TOP", op::TOP), ("FILL", op::FILL), ("INFO", op::INFO),
+        ("CHEST", op::CHEST), ("ENCHANT", op::ENCHANT),
     ];
     let table: Vec<String> = ops.iter().map(|(n, v)| format!("{n}={v}")).collect();
     format!("local OP = {{{}}}\n{PRELUDE}", table.join(","))
 }
+
+/// Nombre d'erreurs de script rencontrees depuis le lancement : les essais s'assurent qu'un jeu n'en fait pas.
+pub static SCRIPT_ERRORS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 const PRELUDE: &str = r##"
 local call = _call
@@ -781,6 +832,7 @@ function Player:kick(reason) call(OP.KICK, self.id, tostring(reason or "")) end
 function Player:send(name, data) call(OP.SEND, self.id, tostring(name), tostring(data or "")) end
 function Player:online() return call(OP.ONLINE, self.id) end
 function Player:count(item) return call(OP.COUNT, self.id, item) end
+function Player:give_enchanted(item, enchant, level) return call(OP.GIVE, self.id, item, 1, enchant, level or 1) end
 function Player:take(item, n) return call(OP.TAKE, self.id, item, n or 1) end
 function Player:held() return call(OP.HELD, self.id) end
 function Player:set_mode(mode) call(OP.SET_MODE, self.id, mode) end
@@ -792,6 +844,7 @@ function Player:damage(amount) call(OP.DAMAGE, self.id, amount) end
 function Player:set_home(x, y, z) call(OP.SET_HOME, self.id, x, y, z) end
 function Player:clear() call(OP.CLEAR, self.id) end
 function Player:info(text) call(OP.INFO, self.id, tostring(text)) end
+function Player:enchant(name, level) return call(OP.ENCHANT, self.id, name, level or 1) end
 
 function players()
   local flat, out = { call(OP.PLAYERS) }, {}
@@ -815,6 +868,7 @@ world = {
   sound = function(name, x, y, z, volume) call(OP.SOUND, nil, name, volume or 1, x, y, z) end,
   top = function(x, z) return call(OP.TOP, x, z) end,
   fill = function(x1, y1, z1, x2, y2, z2, block) return call(OP.FILL, x1, y1, z1, x2, y2, z2, block) end,
+  chest = function(x, y, z, item, n) return call(OP.CHEST, x, y, z, item, n or 1) end,
 }
 items = {
   register = function(i)
@@ -888,6 +942,197 @@ local function emit(event, pid, pname, ...)
   end
   return ok
 end
+-- ---------------------------------------------------------------------------------------------
+-- minigame{...} : la base commune d'un mini-jeu. Elle tient l'attente des joueurs, le compte a
+-- rebours, les equipes, qui est encore en jeu, l'etat affiche a l'ecran et la victoire ; le jeu
+-- n'ecrit que ce qui lui est propre.
+--
+--   local g = minigame{ id = "pitchout", name = "PitchOut", min = 2, countdown = 15,
+--     teams = { "Rouge", "Bleue" },          -- facultatif : sans equipes, chacun pour soi
+--     height = 250,                          -- altitude de l'arene (g.oy)
+--     build = function(g) ... end,           -- batit la carte autour de g.ox, g.oy, g.oz
+--     spawn = function(g, p, i, team) ... end, -- place le joueur numero i au depart
+--     start = function(g) ... end,           -- une fois tout le monde en place
+--     second = function(g, clock) ... end,   -- chaque seconde de la partie
+--     death = function(g, p, killer) ... end,  -- rend vrai si le joueur reste en jeu (il reviendra)
+--     respawn = function(g, p) ... end,      -- retour en jeu d'un joueur reste en lice
+--     status = function(g, p) return "..." end,
+--     limit = 600, timeout = function(g) ... end }  -- fin de partie au temps
+--
+-- g.phase ("attente", "jeu", "fin"), g.clock, g.count, g:alive(p), g:team(p), g:out(p, pourquoi),
+-- g:win(texte), g:players() (ceux en jeu), g:mates(n) (nombre de joueurs de l'equipe n).
+function minigame(def)
+  local g = { def = def, phase = "attente", clock = 0, ticks = 0, wait = def.countdown or 15,
+    ox = 0, oy = def.height or 250, oz = 0, count = 0, started = 0, kills = {}, data = {} }
+  local alive, team_of = {}, {}
+  local min = def.min or 2
+  function g:alive(p) return alive[p.name] == true end
+  function g:team(p) return team_of[p.name] end
+  function g:team_name(n) return def.teams and def.teams[n] or "" end
+  function g:players()
+    local out = {}
+    for _, p in ipairs(players()) do if alive[p.name] then out[#out + 1] = p end end
+    return out
+  end
+  function g:mates(n)
+    local c = 0
+    for name, t in pairs(team_of) do if t == n and alive[name] then c = c + 1 end end
+    return c
+  end
+  -- Place numero i sur un cercle de rayon r autour du centre : x, z.
+  function g:ring(i, r)
+    local a = (i - 1) / math.max(1, g.total or 1) * 2 * math.pi
+    return g.ox + math.floor(math.cos(a) * r + 0.5), g.oz + math.floor(math.sin(a) * r + 0.5)
+  end
+  -- Un tirage de 1 a n, reproductible : les scripts n'ont pas d'horloge a eux.
+  function g:roll(n)
+    g.seed = ((g.seed or 7) * 1103515245 + 12345 + g.ticks) % 2147483648
+    return g.seed % n + 1
+  end
+  function g:win(text)
+    if g.phase == "fin" then return end
+    g.phase = "fin"
+    rules.set("pvp", false)
+    announce(text)
+    say(text)
+  end
+  -- Reste-t-il de quoi jouer ? La derniere equipe, ou le dernier joueur, l'emporte.
+  function g:check()
+    if g.phase ~= "jeu" or def.endless then return end
+    if def.teams then
+      local standing, last = 0, nil
+      for n = 1, #def.teams do if g:mates(n) > 0 then standing, last = standing + 1, n end end
+      if standing <= 1 then g:win(last and ("L'equipe " .. def.teams[last] .. " remporte la partie de " .. def.name .. " !") or (def.name .. " : partie terminee.")) end
+    elseif g.count <= 1 and g.started > 1 then
+      local winner
+      for name in pairs(alive) do winner = name end
+      g:win(winner and (winner .. " remporte la partie de " .. def.name .. " !") or (def.name .. " : personne n'a gagne."))
+    end
+  end
+  function g:out(p, why)
+    if g.phase ~= "jeu" or not alive[p.name] then return end
+    alive[p.name] = nil
+    g.count = g.count - 1
+    say(p.name .. " est elimine" .. (why or "") .. ". Il reste " .. g.count .. " joueur" .. (g.count > 1 and "s" or "") .. ".")
+    g:check()
+  end
+  function g:begin()
+    local list = players()
+    if #list == 0 then return end
+    local x, _, z = list[1]:pos()
+    g.ox, g.oz = math.floor(x or 0), math.floor(z or 0)
+    alive, team_of, g.count, g.kills, g.data = {}, {}, 0, {}, {}
+    g.total = math.min(#list, def.places or 64)
+    if def.build then def.build(g) end
+    local places = def.places or 64
+    for i, p in ipairs(list) do
+      if i <= places then
+        local team = def.teams and ((i - 1) % #def.teams + 1) or nil
+        team_of[p.name], alive[p.name] = team, true
+        g.count = g.count + 1
+        p:clear()
+        p:set_mode(def.mode or "aventure")
+        p:set_health(20)
+        p:set_hunger(20)
+        if def.spawn then def.spawn(g, p, i, team) end
+        if team then p:tell("Vous etes dans l'equipe " .. def.teams[team] .. ".") end
+      else
+        p:set_mode("spectateur")
+      end
+    end
+    g.started, g.phase, g.clock = g.count, "jeu", 0
+    rules.set("pvp", def.pvp ~= false)
+    announce(def.name .. " : c'est parti !")
+    if def.start then def.start(g) end
+  end
+  local function status(p)
+    if g.phase == "attente" then
+      local n = #players()
+      if n < min then return def.name .. " - en attente de joueurs (" .. n .. "/" .. min .. ")" end
+      return def.name .. " - depart dans " .. g.wait .. " s"
+    elseif g.phase == "jeu" then
+      return def.name .. " - " .. (def.status and def.status(g, p) or (g.count .. " en jeu"))
+    end
+    return def.name .. " - partie terminee"
+  end
+  rules.set("pvp", false)
+  rules.set("mobs", false)
+  on("join", function(p)
+    if g.phase == "attente" then
+      p:set_mode("aventure")
+      p:tell("Bienvenue dans " .. def.name .. " ! La partie commence des que " .. min .. " joueurs sont la.")
+    else
+      p:set_mode("spectateur")
+      p:tell("La partie est en cours : vous la regardez en spectateur.")
+    end
+  end)
+  on("leave", function(p) g:out(p, " (parti)") end)
+  -- Pas de coup entre coequipiers (sauf si le jeu le veut : friendly_fire = true).
+  on("hit", function(p, victim)
+    if def.teams and not def.friendly_fire and team_of[p.name] and team_of[p.name] == team_of[victim] then return false end
+  end)
+  on("death", function(p, killer)
+    if g.phase ~= "jeu" or not alive[p.name] then return end
+    local by = killer ~= "" and killer or nil
+    if by then g.kills[by] = (g.kills[by] or 0) + 1 end
+    if def.death and def.death(g, p, by) then return end
+    g:out(p, by and (" par " .. by) or "")
+  end)
+  on("respawn", function(p)
+    if g.phase == "attente" then return end
+    if alive[p.name] and def.respawn then
+      p:set_mode(def.mode or "aventure")
+      def.respawn(g, p)
+    else
+      p:set_mode("spectateur")
+      p:teleport(g.ox + 0.5, g.oy + 12, g.oz + 0.5)
+    end
+  end)
+  on("tick", function()
+    g.ticks = g.ticks + 1
+    if g.phase == "jeu" and def.tick then def.tick(g) end
+    if g.ticks % 20 ~= 0 then return end
+    local list = players()
+    if g.phase == "attente" then
+      if #list >= min then
+        g.wait = g.wait - 1
+        if g.wait <= 0 then g:begin() elseif g.wait <= 5 or g.wait % 5 == 0 then announce("Depart dans " .. g.wait .. " s") end
+      else
+        g.wait = def.countdown or 15
+      end
+    elseif g.phase == "jeu" then
+      g.clock = g.clock + 1
+      -- Tomber dans le vide, c'est mourir.
+      if def.void then
+        for _, p in ipairs(list) do
+          local _, y = p:pos()
+          if alive[p.name] and y and y < g.oy - def.void then p:damage(1000) end
+        end
+      end
+      if def.second then def.second(g, g.clock) end
+      if def.limit and g.clock >= def.limit and g.phase == "jeu" then
+        if def.timeout then def.timeout(g) else g:win(def.name .. " : temps ecoule.") end
+      end
+    end
+    for _, p in ipairs(list) do p:send("etat", status(p)) end
+  end)
+  command(def.id, "Lance la partie sans attendre (avec « demarrer »), ou dit ou elle en est", function(p, args)
+    if args == "demarrer" and g.phase == "attente" then
+      g:begin()
+      return def.name .. " lance."
+    end
+    return status(p)
+  end)
+  return g
+end
+
+-- Une ile ronde dans le ciel : un plateau et un socle qui s'effile vers le bas.
+function world.island(x, y, z, r, block)
+  for d = 0, math.min(3, r) do
+    world.fill(x - r + d, y - d, z - r + d, x + r - d, y - d, z + r - d, d == 0 and (block or "pierre") or "pierre")
+  end
+end
+
 return function(kind, name, pid, pname, ...)
   if kind == 0 then return emit(name, pid, pname, ...) end
   local fn = commands[name]
@@ -938,6 +1183,7 @@ impl Loaded {
         r.errors += 1;
         // Un script qui echoue a chaque tick ne noie pas le journal.
         if r.errors <= 20 {
+            SCRIPT_ERRORS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             eprintln!("[mod {}] {what} : {e}", self.pack.manifest.id);
         }
     }
@@ -1543,9 +1789,275 @@ mod tests {
         let got: Vec<ServerMsg> = rx2.try_iter().collect();
         assert!(got.iter().any(|m| matches!(m, ServerMsg::Chat { text, .. } if text.contains("Aki est elimine par Ren"))));
         assert!(got.iter().any(|m| matches!(m, ServerMsg::Info { text } if text.contains("Ren remporte l'UHC"))));
+        // Le vaincu laisse sa tete ; elle rend deux coeurs au vainqueur, comme la pomme doree en rend quatre.
+        let item = |name: &str| srv.mods.as_ref().unwrap().content.items.iter().find(|d| d.key == format!("uhc:{name}")).unwrap().id;
+        let (head, apple) = (item("tete"), item("pomme_doree"));
+        assert!(srv.drops.iter().any(|d| d.stack.id == head), "la tete tombe");
+        {
+            let c = srv.clients.get_mut(&2).unwrap();
+            (c.hp, c.sel, c.inv[0]) = (10.0, 0, Some(Stack::new(apple, 2)));
+        }
+        assert!(!srv.mod_event("use", Some(2), &[Arg::S("uhc:pomme_doree".into())]));
+        assert_eq!((srv.clients[&2].hp, srv.clients[&2].inv[0].map(|s| s.n)), (18.0, Some(1)));
+        // La pomme doree se fabrique : une pomme entouree d'or.
+        assert!(srv.mods.as_ref().unwrap().content.recipes.iter().any(|r| r.out == apple));
         // Pas de seconde vie : le vaincu revient en spectateur.
         srv.on_msg(1, ClientMsg::Respawn);
         assert_eq!(srv.clients[&1].mode, shared::rules::SPECTATOR);
+        sm::clear_content();
+    }
+
+    #[test]
+    fn a_game_of_sky_wars() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let pack = mode("skywars");
+        assert_eq!(pack.manifest.mode.as_ref().map(|m| m.name.as_str()), Some("Sky Wars"));
+        let (mut srv, rx) = server(vec![pack]);
+        let rx2 = second(&mut srv, "Ren");
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        // La carte se batit pendant l'attente, autour du premier joueur.
+        for _ in 0..80 {
+            srv.mod_event("tick", None, &[]);
+        }
+        srv.chat(1, "/skywars demarrer".into());
+        // Chacun attend dans sa cage de papier, au-dessus de son ile, loin de l'autre ; on ne se bat pas encore.
+        let (a, b) = (srv.clients[&1].pos, srv.clients[&2].pos);
+        assert!(a[1] > 255.0 && b[1] > 255.0 && Vec3::from(a).distance(Vec3::from(b)) > 50.0, "{a:?} {b:?}");
+        assert!(!srv.pvp && srv.clients[&1].mode == shared::rules::ADVENTURE);
+        let (ax, az) = (a[0].floor() as i32, a[2].floor() as i32);
+        assert_eq!(srv.world.get([ax + 1, 258, az]).map(|c| c.0), Some(blocks::GLASS), "la cage");
+        assert_eq!(srv.world.get([ax, 250, az]).map(|c| c.0), Some(blocks::GRASS), "l'ile");
+        // Les coffres des iles et du centre sont garnis : dix-huit coffres pour huit iles et le centre.
+        let arena: Vec<_> = srv.world.chests.iter().filter(|(p, _)| (251..=252).contains(&p[1])).collect();
+        let full = arena.iter().filter(|(_, c)| c.iter().flatten().count() >= 2).count();
+        assert_eq!((arena.len(), full), (20, 20));
+        let center = srv.world.chests.iter().filter(|(p, _)| p[1] == 252).count();
+        assert_eq!(center, 4);
+        // Les cages s'ouvrent : on tombe sur son ile, le combat est ouvert, on peut batir.
+        for _ in 0..(20 * 9) {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.pvp && srv.clients[&1].mode == shared::rules::SURVIVAL);
+        assert_eq!(srv.world.get([ax + 1, 258, az]).map(|c| c.0), Some(blocks::AIR));
+        assert!(infos(&rx).iter().any(|t| t.contains("C'est parti")));
+        let at = |p: [i32; 3], word: &str| [Arg::N(p[0] as f64), Arg::N(p[1] as f64), Arg::N(p[2] as f64), Arg::S(word.into())];
+        assert!(srv.mod_event("place", Some(1), &at([ax + 6, 250, az], "planches_de_hinoki")));
+        assert!(!srv.mod_event("place", Some(1), &at([ax + 600, 250, az], "planches_de_hinoki")), "pas hors de l'arene");
+        // Tomber dans le vide tue ; pas de seconde vie, et le dernier debout gagne.
+        srv.clients.get_mut(&2).unwrap().pos[1] = 100.0;
+        srv.clients.get_mut(&2).unwrap().hit_by = Some((1, Instant::now()));
+        for _ in 0..20 {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.clients[&2].hp <= 0.0, "la chute dans le vide est mortelle");
+        srv.kill(2);
+        let got: Vec<ServerMsg> = rx2.try_iter().collect();
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Chat { text, .. } if text.contains("Ren est elimine par Aki"))));
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Info { text } if text.contains("Aki remporte la partie de Sky Wars"))));
+        srv.on_msg(2, ClientMsg::Respawn);
+        assert_eq!(srv.clients[&2].mode, shared::rules::SPECTATOR);
+        sm::clear_content();
+    }
+
+    #[test]
+    fn a_game_of_hunger_games() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let pack = mode("hungergames");
+        assert_eq!(pack.manifest.mode.as_ref().map(|m| m.name.as_str()), Some("Hunger Games"));
+        let (mut srv, rx) = server(vec![pack]);
+        let rx2 = second(&mut srv, "Ren");
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        // L'arene se batit pendant l'attente : la corne d'abondance, puis les coffres disperses.
+        for _ in 0..(5 * 26) {
+            srv.mod_event("tick", None, &[]);
+        }
+        let corn = srv.world.chests.values().filter(|c| c.iter().flatten().count() >= 3).count();
+        assert!(srv.world.chests.len() >= 8 + 20 && corn >= 8, "{} coffres, {corn} bien garnis", srv.world.chests.len());
+        assert!(srv.world.chests.values().all(|c| c.iter().flatten().count() >= 1), "aucun coffre vide");
+        srv.chat(1, "/hungergames demarrer".into());
+        // Chaque tribut est sur son socle d'obsidienne, en cercle autour de la corne ; on ne se bat pas encore.
+        let (a, b) = (srv.clients[&1].pos, srv.clients[&2].pos);
+        let under = |p: [f64; 3]| srv.world.get([p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32]).map(|c| c.0);
+        assert_eq!((under(a), under(b)), (Some(blocks::OBSIDIAN), Some(blocks::OBSIDIAN)));
+        assert!(!srv.pvp && srv.clients[&1].mode == shared::rules::ADVENTURE);
+        // Qui quitte son socle avant le signal y est remis.
+        srv.clients.get_mut(&1).unwrap().pos[0] += 4.0;
+        srv.mod_event("tick", None, &[]);
+        assert_eq!(srv.clients[&1].pos, a);
+        // Le signal, puis le temps de courir : le combat s'ouvre.
+        srv.chat(1, "/hungergames signal".into());
+        for _ in 0..(20 * 17) {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.pvp);
+        assert!(infos(&rx).iter().any(|t| t.contains("Que les Hunger Games commencent")));
+        // On ne casse ni ne pose rien dans l'arene.
+        let at = |p: [i32; 3], word: &str| [Arg::N(p[0] as f64), Arg::N(p[1] as f64), Arg::N(p[2] as f64), Arg::S(word.into())];
+        assert!(!srv.mod_event("break", Some(1), &at([0, 100, 0], "pierre")));
+        assert!(!srv.mod_event("place", Some(1), &at([0, 100, 0], "pierre")));
+        // Hors de l'arene, on perd de la vie.
+        srv.clients.get_mut(&2).unwrap().pos[0] += 500.0;
+        for _ in 0..20 {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.clients[&2].hp < 20.0);
+        // Un tribut tombe : le dernier en vie gagne, le vaincu regarde.
+        srv.clients.get_mut(&2).unwrap().hit_by = Some((1, Instant::now()));
+        srv.kill(2);
+        let got: Vec<ServerMsg> = rx2.try_iter().collect();
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Chat { text, .. } if text.contains("Ren est tombe, vaincu par Aki"))));
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Info { text } if text.contains("Aki remporte les Hunger Games"))));
+        srv.on_msg(2, ClientMsg::Respawn);
+        assert_eq!(srv.clients[&2].mode, shared::rules::SPECTATOR);
+        sm::clear_content();
+    }
+
+    /// Chaque mode de jeu du dossier `modes` se charge, se lance a deux joueurs et tourne une minute
+    /// sans que son script fasse la moindre erreur ; les objets qu'il donne existent tous.
+    #[test]
+    fn every_bundled_mode_plays() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../modes");
+        let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().join("mod.json").exists()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        // Faction n'est pas une partie qui se lance : c'est un monde garde, qui a son propre essai.
+        names.retain(|n| n != "faction");
+        assert!(names.len() >= 15, "{names:?}");
+        for name in names {
+            let before = SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed);
+            let pack = mode(&name);
+            let shown = pack.manifest.mode.as_ref().unwrap_or_else(|| panic!("{name} : pas de rubrique mode")).name.clone();
+            let (mut srv, rx) = server(vec![pack]);
+            let _rx2 = second(&mut srv, "Ren");
+            srv.mod_event("join", Some(1), &[]);
+            srv.mod_event("join", Some(2), &[]);
+            for _ in 0..(20 * 8) {
+                srv.mod_event("tick", None, &[]);
+            }
+            srv.chat(1, format!("/{name} demarrer"));
+            let moved = srv.clients[&1].pos != [8.5, 200.0, 8.5];
+            for second in 0..70 {
+                for _ in 0..20 {
+                    srv.mod_event("tick", None, &[]);
+                }
+                // Une mort et un retour en jeu en cours de route, pour passer par ces chemins-la aussi.
+                if second == 20 {
+                    srv.clients.get_mut(&2).unwrap().hit_by = Some((1, Instant::now()));
+                    srv.kill(2);
+                    srv.on_msg(2, ClientMsg::Respawn);
+                }
+            }
+            let errors = SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed) - before;
+            assert_eq!(errors, 0, "{name} ({shown}) : erreurs de script");
+            let status = rx.try_iter().filter_map(|m| if let ServerMsg::ModMsg { name: n, data, .. } = m { (n == "etat").then_some(data) } else { None }).last();
+            assert!(status.is_some_and(|t| !t.contains("attente")), "{name} : la partie n'a pas commence");
+            assert!(moved || srv.clients[&1].pos != [8.5, 200.0, 8.5], "{name} : les joueurs n'ont pas ete places");
+            sm::clear_content();
+        }
+    }
+
+    /// Releve, dans les scripts des modes, les mots qui ressemblent a un objet ou un bloc et n'en sont pas.
+    /// cargo test -p server names_in_modes -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn names_in_modes() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../modes");
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Ok(lua) = std::fs::read_to_string(entry.path().join("serveur.lua")) else { continue };
+            let (_srv, _rx) = server(vec![mode(&name)]);
+            let mut unknown = Vec::new();
+            for (k, piece) in lua.split('"').enumerate() {
+                let word = piece.strip_prefix(&format!("{name}:")).unwrap_or(piece);
+                let looks = k % 2 == 1 && word.contains('_') && word.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                if looks && item_from(piece).is_none() && block_from(piece).is_none() && cmd::ench_from(piece).is_none() {
+                    unknown.push(piece.to_string());
+                }
+            }
+            unknown.sort();
+            unknown.dedup();
+            println!("{name} : {unknown:?}");
+            sm::clear_content();
+        }
+    }
+
+    #[test]
+    fn a_world_of_factions() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let before = SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed);
+        let pack = mode("faction");
+        assert!(pack.manifest.mode.as_ref().is_some_and(|m| m.keep_world), "le monde des factions est garde");
+        let (mut srv, rx) = server(vec![pack]);
+        let rx2 = second(&mut srv, "Ren");
+        srv.rules.difficulty = shared::rules::NORMAL;
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        let said = |rx: &Receiver<ServerMsg>| -> Vec<String> { rx.try_iter().filter_map(|m| if let ServerMsg::Chat { text, .. } = m { Some(text) } else { None }).collect() };
+        let at = |p: [i32; 3], word: &str| [Arg::N(p[0] as f64), Arg::N(p[1] as f64), Arg::N(p[2] as f64), Arg::S(word.into())];
+        // La zone sure, autour du point de depart : on n'y batit pas, on ne s'y bat pas, on n'y revendique rien.
+        assert!(!srv.mod_event("place", Some(1), &at([8, 200, 8], "pierre")));
+        srv.chat(1, "/f creer Dojo".into());
+        srv.chat(1, "/f claim".into());
+        assert!(said(&rx).iter().any(|t| t.contains("zone sure")));
+        // Loin de la : Aki revendique un chunk, y fixe sa base, et lui seul y touche.
+        srv.clients.get_mut(&1).unwrap().pos = [200.5, 150.0, 200.5];
+        srv.clients.get_mut(&2).unwrap().pos = [202.5, 150.0, 202.5];
+        srv.chat(1, "/f claim".into());
+        srv.chat(1, "/f sethome".into());
+        assert!(srv.mod_event("place", Some(1), &at([200, 150, 200], "pierre")));
+        assert!(!srv.mod_event("place", Some(2), &at([200, 150, 200], "pierre")), "un etranger ne batit pas chez une faction");
+        assert!(!srv.mod_event("break", Some(2), &at([201, 150, 205], "pierre")));
+        assert!(!srv.mod_event("interact", Some(2), &at([201, 150, 205], "coffre_tansu")));
+        assert!(srv.mod_event("place", Some(2), &at([300, 150, 300], "pierre")), "la zone libre est a tout le monde");
+        // Ren est invite, rejoint : il est chez lui, et l'on ne se frappe plus entre membres.
+        assert!(srv.mod_event("hit", Some(1), &[Arg::S("Ren".into())]), "deux inconnus peuvent se battre");
+        srv.chat(1, "/f inviter Ren".into());
+        srv.chat(2, "/f rejoindre Dojo".into());
+        assert!(srv.mod_event("place", Some(2), &at([200, 150, 200], "pierre")));
+        assert!(!srv.mod_event("hit", Some(1), &[Arg::S("Ren".into())]));
+        srv.on_msg(1, ClientMsg::Hit { id: 2, sprint: false });
+        assert_eq!(srv.clients[&2].hp, 20.0, "le coup entre membres n'est pas porte");
+        // La puissance : 10 par membre, 4 de moins a chaque mort. Deux terres pour 20 de puissance, c'est tenu.
+        srv.clients.get_mut(&2).unwrap().pos = [220.5, 150.0, 200.5];
+        srv.chat(2, "/f claim".into());
+        srv.chat(2, "/f quitter".into());
+        // Reste Aki seul, 10 de puissance pour 2 terres. Il meurt trois fois : plus de puissance, il ne tient plus ses terres.
+        for _ in 0..3 {
+            srv.kill(1);
+            srv.on_msg(1, ClientMsg::Respawn);
+        }
+        srv.chat(1, "/f power".into());
+        assert!(said(&rx).iter().any(|t| t.contains("Votre puissance : 0 / 10")));
+        // Ren fonde sa faction et lui prend le chunk qu'il ne peut plus tenir.
+        srv.chat(2, "/f creer Ronin".into());
+        srv.clients.get_mut(&2).unwrap().pos = [200.5, 150.0, 200.5];
+        srv.chat(2, "/f claim".into());
+        assert!(said(&rx2).iter().any(|t| t.contains("revendique le chunk")));
+        assert!(!srv.mod_event("place", Some(1), &at([200, 150, 200], "pierre")), "les terres ont change de mains");
+        assert!(srv.mod_event("place", Some(2), &at([200, 150, 200], "pierre")));
+        // Les relations : ennemis d'un mot, allies seulement si les deux le veulent.
+        // (Aki est revenu au point de depart, dans la zone sure, ou l'on ne se bat pas : il en ressort.)
+        assert!(!srv.mod_event("hit", Some(2), &[Arg::S("Aki".into())]), "pas de combat en zone sure");
+        srv.clients.get_mut(&1).unwrap().pos = [205.5, 150.0, 205.5];
+        srv.chat(2, "/f ennemi Dojo".into());
+        srv.chat(2, "/f allie Dojo".into());
+        assert!(srv.mod_event("hit", Some(2), &[Arg::S("Aki".into())]), "une alliance proposee n'est pas encore une alliance");
+        srv.chat(1, "/f allie Ronin".into());
+        assert!(!srv.mod_event("hit", Some(2), &[Arg::S("Aki".into())]));
+        // Tout cela est enregistre avec le monde.
+        let store = &srv.mods.as_ref().unwrap();
+        let _ = store;
+        srv.chat(1, "/f carte".into());
+        srv.chat(1, "/f info".into());
+        srv.chat(1, "/f liste".into());
+        for _ in 0..(20 * 3) {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(rx.try_iter().any(|m| matches!(m, ServerMsg::ModMsg { name, data, .. } if name == "etat" && data.contains("Dojo"))));
+        assert_eq!(SCRIPT_ERRORS.load(std::sync::atomic::Ordering::Relaxed) - before, 0, "erreurs de script");
         sm::clear_content();
     }
 
@@ -1589,6 +2101,23 @@ mod tests {
             srv.mod_event("tick", None, &[]);
         }
         assert!(srv.drops.len() > drops);
+        // Toute la boutique se vend : chaque article existe, et se paie dans sa monnaie.
+        for index in 1..=18 {
+            let c = srv.clients.get_mut(&1).unwrap();
+            (c.inv, c.inv_dirty) = ([None; 36], true);
+            for (slot, coin) in [items::IRON_INGOT, items::GOLD_INGOT, items::DIAMOND, items::EMBER_CRYSTAL].into_iter().enumerate() {
+                c.inv[30 + slot] = Some(Stack::new(coin, 32));
+            }
+            srv.on_msg(1, ClientMsg::ModMsg { mod_id: "bedwars".into(), name: "acheter".into(), data: index.to_string() });
+            let c = &srv.clients[&1];
+            let paid = (30..34).any(|k| c.inv[k].is_none_or(|st| st.n < 32));
+            assert!(paid && c.inv[..30].iter().flatten().count() >= 1, "article {index}");
+        }
+        // La forge d'equipe s'ameliore contre des diamants : l'ile produit alors plus vite.
+        srv.on_msg(1, ClientMsg::ModMsg { mod_id: "bedwars".into(), name: "forge".into(), data: String::new() });
+        assert!(infos(&rx).iter().any(|t| t.contains("ameliore sa forge")) || rx2.try_iter().any(|m| matches!(m, ServerMsg::Chat { text, .. } if text.contains("ameliore sa forge"))));
+        // Les ilots de diamant sont batis, entre les iles.
+        assert_eq!(srv.world.get([ax - 8, 250, az + 18]).map(|c| c.0), Some(generator));
         // Sans lit, la mort est definitive : l'equipe rouge gagne.
         srv.kill(2);
         assert!(infos(&rx).iter().any(|t| t.contains("L'equipe Rouge remporte la partie")));
@@ -1604,14 +2133,14 @@ mod tests {
         let _rx2 = second(&mut srv, "Ren");
         srv.rules.difficulty = shared::rules::NORMAL;
         srv.clients.get_mut(&1).unwrap().last_hit = Instant::now() - Duration::from_secs(5);
-        srv.on_msg(1, ClientMsg::Hit { id: 2 });
+        srv.on_msg(1, ClientMsg::Hit { id: 2, sprint: false });
         assert!(srv.clients[&2].hp < 20.0);
         // Combat coupe : plus rien ne passe.
         srv.pvp = false;
         let hp = srv.clients[&2].hp;
         srv.clients.get_mut(&1).unwrap().last_hit = Instant::now() - Duration::from_secs(5);
         srv.clients.get_mut(&2).unwrap().inv_t = 0.0;
-        srv.on_msg(1, ClientMsg::Hit { id: 2 });
+        srv.on_msg(1, ClientMsg::Hit { id: 2, sprint: false });
         assert_eq!(srv.clients[&2].hp, hp);
         sm::clear_content();
     }

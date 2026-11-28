@@ -71,6 +71,10 @@ pub mod op {
     pub const TOP: u32 = 43;
     pub const FILL: u32 = 44;
     pub const INFO: u32 = 45;
+    /// Range des objets dans un coffre (pose s'il n'y en a pas) : x, y, z, objet, nombre.
+    pub const CHEST: u32 = 46;
+    /// Enchante l'objet que tient le joueur : joueur, enchantement, niveau.
+    pub const ENCHANT: u32 = 47;
     // Côté client.
     pub const C_LOG: u32 = 100;
     pub const C_SEND: u32 = 102;

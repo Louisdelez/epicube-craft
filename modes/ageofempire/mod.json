@@ -1,0 +1,18 @@
+{
+  "id": "ageofempire",
+  "name": "Age Of Empire",
+  "version": "1.0.0",
+  "description": "Des royaumes qui traversent les âges : pierre, fer, diamant. Défendez votre cœur, détruisez ceux des autres.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Age Of Empire",
+    "about": "Des royaumes qui traversent les âges : pierre, fer, diamant. Défendez votre cœur, détruisez ceux des autres.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "survie"
+    ],
+    "players": 16,
+    "game": "survie"
+  }
+}

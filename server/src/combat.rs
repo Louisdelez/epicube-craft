@@ -26,10 +26,18 @@ impl Server {
                 if power < 0.1 || items::count(&c.inv, items::ARROW) == 0 {
                     return;
                 }
-                items::remove(&mut c.inv, items::ARROW, 1);
+                // Infinite : la fleche n'est pas depensee (et ne se ramasse pas). Puissance : un quart de plus par niveau, et un.
+                let endless = st.ench.level(shared::ench::INFINITY) > 0;
+                if !endless {
+                    items::remove(&mut c.inv, items::ARROW, 1);
+                }
+                let strength = match st.ench.level(shared::ench::POWER) {
+                    0 => 1.0,
+                    l => 1.0 + 0.25 * (l as f64 + 1.0),
+                };
                 // De 2 a 9 points selon la tension ; une fleche tiree a fond peut porter plus fort encore.
                 let bonus = if power >= 0.99 && lucky { 2.0 } else { 0.0 };
-                (dir * (10.0 + (ARROW_SPEED - 10.0) * power), 0, 2.0 + 7.0 * power + bonus, Some(Stack::new(items::ARROW, 1)))
+                (dir * (10.0 + (ARROW_SPEED - 10.0) * power), 0, (2.0 + 7.0 * power + bonus) * strength, (!endless).then(|| Stack::new(items::ARROW, 1)))
             }
             items::YARI => {
                 // La lance part avec son usure : on la retrouve plantee la ou elle tombe.
@@ -53,10 +61,11 @@ impl Server {
     }
 
     /// Bouclier leve : pare ce qui vient de face. `knock` indique d'ou vient le coup.
-    /// Renvoie vrai si le coup est pare ; le bouclier s'use d'autant.
-    pub(crate) fn shield_blocks(&mut self, id: u32, dmg: f64, knock: Vec3) -> bool {
+    /// Renvoie vrai si le coup est pare ; le bouclier s'use d'autant. Il ne pare qu'un quart de seconde
+    /// apres avoir ete leve, et une hache (`axe`) l'abat : il reste baisse cinq secondes.
+    pub(crate) fn shield_blocks(&mut self, id: u32, dmg: f64, knock: Vec3, axe: bool) -> bool {
         let Some(c) = self.clients.get_mut(&id) else { return false };
-        if !c.blocking || c.held() != Some(items::SHIELD) {
+        if !c.blocking || c.held() != Some(items::SHIELD) || c.block_since.elapsed().as_secs_f64() < 0.25 {
             return false;
         }
         let push = Vec3::new(knock.x, 0.0, knock.z);
@@ -74,8 +83,16 @@ impl Server {
             c.inv_dirty = true;
         }
         c.inv_t = 0.3;
+        c.last_dmg = dmg;
+        if axe {
+            c.blocking = false;
+            c.shield_off = 5.0;
+            c.send(ServerMsg::ShieldDown { secs: 5.0 });
+            self.act(id, shared::proto::act::GUARD_DOWN);
+        }
+        let Some(c) = self.clients.get(&id) else { return true };
         let at = [c.pos[0].floor() as i32, c.pos[1].floor() as i32 + 1, c.pos[2].floor() as i32];
-        self.sound(at, shared::proto::sound::PARRY, 0);
+        self.sound(at, if axe { shared::proto::sound::SHIELD_DOWN } else { shared::proto::sound::PARRY }, 0);
         true
     }
 }
@@ -280,6 +297,261 @@ mod tests {
         srv.clients.get_mut(&1).unwrap().blocking = false;
         srv.hurt_player(1, 5.0, Vec3::new(0.0, 3.0, -6.0));
         assert_eq!(srv.clients[&1].hp, 10.0);
+    }
+
+    /// Un second joueur, `dz` blocs devant le premier (et `dx` sur le cote), tourne vers lui.
+    fn rival(srv: &mut Server, c: [i32; 3], id: u32, dx: f64, dz: f64, held: Option<Stack>) -> Receiver<ServerMsg> {
+        let (tx, rx) = mpsc::channel();
+        let mut cl = Client::new(tx, [c[0] as f64 + 0.5 + dx, c[1] as f64, c[2] as f64 + 0.5 + dz]);
+        cl.ready = true;
+        cl.on_ground = true;
+        cl.inv[0] = held;
+        cl.yaw = std::f64::consts::PI;
+        srv.clients.insert(id, cl);
+        rx
+    }
+
+    /// Deux joueurs face a face, le premier arme d'un katana revenu en garde.
+    fn duel() -> (Server, [i32; 3], Receiver<ServerMsg>, Receiver<ServerMsg>) {
+        let (mut srv, c) = lab();
+        srv.pvp = true;
+        srv.rules.difficulty = shared::rules::NORMAL;
+        let rx1 = player(&mut srv, c, Stack::new(items::tool_id(items::SWORD, 2), 1));
+        let rx2 = rival(&mut srv, c, 2, 0.0, 2.0, None);
+        rest(&mut srv, 5.0);
+        (srv, c, rx1, rx2)
+    }
+
+    /// Remet tout le monde en etat de frapper et d'encaisser.
+    fn again(srv: &mut Server) {
+        rest(srv, 5.0);
+        for c in srv.clients.values_mut() {
+            (c.hp, c.inv_t, c.last_dmg) = (20.0, 0.0, 0.0);
+        }
+    }
+
+    fn knock(rx: &Receiver<ServerMsg>) -> Option<Vec3> {
+        rx.try_iter().filter_map(|m| if let ServerMsg::Knock { vel } = m { Some(Vec3::from(vel)) } else { None }).last()
+    }
+
+    #[test]
+    fn pvp_sprint_hit_knocks_further_and_is_never_critical() {
+        let (mut srv, _c, _rx1, rx2) = duel();
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 14.0);
+        let plain = knock(&rx2).expect("recul");
+        again(&mut srv);
+        srv.hit_player(1, 2, true);
+        let sprint = knock(&rx2).expect("recul");
+        assert!(sprint.z > plain.z * 1.5, "un coup porte en courant repousse plus loin : {sprint} contre {plain}");
+        // En retombant : critique a l'arret, pas en courant.
+        again(&mut srv);
+        let fall = |srv: &mut Server| {
+            let cl = srv.clients.get_mut(&1).unwrap();
+            cl.on_ground = false;
+            cl.fall_peak = cl.pos[1] + 1.0;
+        };
+        fall(&mut srv);
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 11.0, "critique : 6 x 1,5");
+        assert!(rx2.try_iter().any(|m| matches!(m, ServerMsg::PlayerHurt { id: 2, kind: shared::proto::blow::CRIT })));
+        again(&mut srv);
+        fall(&mut srv);
+        srv.hit_player(1, 2, true);
+        assert_eq!(srv.clients[&2].hp, 14.0);
+    }
+
+    #[test]
+    fn pvp_knockback_lifts_only_from_the_ground() {
+        let (mut srv, _c, _rx1, rx2) = duel();
+        srv.hit_player(1, 2, false);
+        let grounded = knock(&rx2).unwrap();
+        again(&mut srv);
+        srv.clients.get_mut(&2).unwrap().on_ground = false;
+        srv.hit_player(1, 2, false);
+        let airborne = knock(&rx2).unwrap();
+        assert!(airborne.y < grounded.y * 0.5 && (airborne.z - grounded.z).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pvp_sweep_grazes_the_neighbours() {
+        let (mut srv, c, _rx1, _rx2) = duel();
+        let _rx3 = rival(&mut srv, c, 3, 1.0, 2.0, None);
+        srv.hit_player(1, 2, false);
+        assert_eq!((srv.clients[&2].hp, srv.clients[&3].hp), (14.0, 19.0));
+        // En courant, la lame ne fauche pas.
+        again(&mut srv);
+        srv.hit_player(1, 2, true);
+        assert_eq!(srv.clients[&3].hp, 20.0);
+    }
+
+    #[test]
+    fn invulnerability_lets_only_a_stronger_blow_through() {
+        let (mut srv, _c, _rx1, _rx2) = duel();
+        assert_eq!(srv.strike(2, 4.0, Vec3::Z, false, 0), Struck::Hurt);
+        assert_eq!(srv.strike(2, 3.0, Vec3::Z, false, 0), Struck::Missed);
+        assert_eq!(srv.clients[&2].hp, 16.0);
+        // Un coup plus fort passe pour la difference.
+        assert_eq!(srv.strike(2, 6.0, Vec3::Z, false, 0), Struck::Hurt);
+        assert_eq!(srv.clients[&2].hp, 14.0);
+    }
+
+    #[test]
+    fn an_axe_knocks_the_shield_down() {
+        let (mut srv, c, rx1, _rx2) = duel();
+        let rx2 = rival(&mut srv, c, 2, 0.0, 2.0, Some(Stack::new(items::SHIELD, 1)));
+        srv.on_msg(2, ClientMsg::Block(true));
+        // A peine leve, le bouclier ne pare pas encore.
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 14.0);
+        // Leve depuis un moment : il pare le katana, et renvoie un peu l'attaquant.
+        again(&mut srv);
+        srv.clients.get_mut(&2).unwrap().block_since = Instant::now() - Duration::from_secs(1);
+        let _ = knock(&rx1);
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 20.0);
+        assert!(srv.clients[&2].blocking);
+        assert!(knock(&rx1).is_some_and(|k| k.z < 0.0));
+        // Une hache l'abat : cinq secondes sans pouvoir le relever.
+        again(&mut srv);
+        srv.clients.get_mut(&1).unwrap().inv[0] = Some(Stack::new(items::tool_id(items::AXE, 2), 1));
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 20.0);
+        assert!(!srv.clients[&2].blocking && srv.clients[&2].shield_off > 4.0);
+        assert!(rx2.try_iter().any(|m| matches!(m, ServerMsg::ShieldDown { .. })));
+        srv.on_msg(2, ClientMsg::Block(true));
+        assert!(!srv.clients[&2].blocking);
+    }
+
+    #[test]
+    fn a_swing_or_a_new_weapon_resets_the_guard() {
+        let (mut srv, _c, _rx1, _rx2) = duel();
+        srv.on_msg(1, ClientMsg::Swing { miss: true });
+        srv.on_msg(1, ClientMsg::Hit { id: 2, sprint: false });
+        assert_eq!(srv.clients[&2].hp, 20.0, "frapper aussitot apres un coup dans le vide ne porte pas");
+        rest(&mut srv, 5.0);
+        srv.clients.get_mut(&1).unwrap().inv[1] = Some(Stack::new(items::tool_id(items::AXE, 2), 1));
+        srv.on_msg(1, ClientMsg::Select(1));
+        srv.on_msg(1, ClientMsg::Hit { id: 2, sprint: false });
+        assert_eq!(srv.clients[&2].hp, 20.0);
+    }
+
+    #[test]
+    fn enchantments_change_the_fight() {
+        use shared::ench as e;
+        let (mut srv, _c, _rx1, rx2) = duel();
+        let katana = srv.clients[&1].inv[0].unwrap();
+        // Tranchant III : 2 points de plus. Recul II : la cible part plus loin.
+        srv.hit_player(1, 2, false);
+        let plain = knock(&rx2).unwrap();
+        again(&mut srv);
+        srv.clients.get_mut(&1).unwrap().inv[0] = Some(Stack { ench: e::Ench::NONE.with(e::SHARPNESS, 3).with(e::KNOCKBACK, 2), ..katana });
+        srv.hit_player(1, 2, false);
+        assert_eq!(srv.clients[&2].hp, 12.0);
+        assert!(knock(&rx2).unwrap().z > plain.z * 2.0);
+        // Protection IV sur les quatre pieces : 64 % de moins, en plus de l'armure.
+        again(&mut srv);
+        let bare = {
+            let v = srv.clients.get_mut(&2).unwrap();
+            for slot in 0..4u8 {
+                v.armor[slot as usize] = Some(Stack::new(items::armor_id(slot, 2), 1));
+            }
+            srv.strike(2, 10.0, Vec3::Z, false, 0);
+            20.0 - srv.clients[&2].hp
+        };
+        again(&mut srv);
+        for st in srv.clients.get_mut(&2).unwrap().armor.iter_mut().flatten() {
+            st.ench = e::Ench::NONE.with(e::PROTECTION, 4);
+        }
+        srv.strike(2, 10.0, Vec3::Z, false, 0);
+        let guarded = 20.0 - srv.clients[&2].hp;
+        assert!((guarded - bare * 0.36).abs() < 1e-9, "{guarded} contre {bare}");
+        // Solidite III : l'arme ne s'use qu'un coup sur quatre environ.
+        let tough = Stack { ench: e::Ench::NONE.with(e::UNBREAKING, 3), ..katana };
+        srv.clients.get_mut(&1).unwrap().inv[0] = Some(tough);
+        for _ in 0..200 {
+            let roll = srv.rng.d();
+            srv.clients.get_mut(&1).unwrap().wear(1, roll);
+        }
+        let used = tough.dur - srv.clients[&1].inv[0].unwrap().dur;
+        assert!((25..=80).contains(&used), "usure : {used}");
+    }
+
+    #[test]
+    fn experience_altar_and_anvil() {
+        use shared::ench as e;
+        let (mut srv, c) = lab();
+        let rx = player(&mut srv, c, Stack::new(items::tool_id(items::PICK, 2), 1));
+        // L'experience monte, et le Raccommodage en prend sa part pour reparer.
+        srv.give_xp(1, e::points_for(30));
+        assert_eq!(e::level_of(srv.clients[&1].xp).0, 30);
+        // Un autel entoure de quinze bibliotheques propose jusqu'au niveau 30.
+        let altar = [c[0], c[1], c[2] + 1];
+        srv.world.set(altar, ENCHANT_TABLE, 0);
+        let mut ring = 0;
+        for dz in -2..=2i32 {
+            for dx in -2..=2i32 {
+                if (dx.abs() == 2 || dz.abs() == 2) && ring < 15 {
+                    srv.world.set([altar[0] + dx, altar[1], altar[2] + dz], BOOKSHELF, 0);
+                    ring += 1;
+                }
+            }
+        }
+        assert_eq!(srv.shelves(altar), 15);
+        srv.open_window(1, Win::Enchant(altar));
+        {
+            let cl = srv.clients.get_mut(&1).unwrap();
+            cl.craft[0] = cl.inv[0].take();
+            cl.craft[1] = Some(Stack::new(CRYSTAL as u16, 3));
+            cl.inv_dirty = true;
+        }
+        srv.flush();
+        let offers = rx.try_iter().filter_map(|m| if let ServerMsg::Offers { offers, shelves: 15 } = m { Some(offers) } else { None }).last().expect("offres de l'autel");
+        assert_eq!((offers.len(), offers[2].cost), (3, 30));
+        srv.on_msg(1, ClientMsg::Enchant { index: 2 });
+        let got = srv.clients[&1].craft[0].unwrap();
+        assert_eq!(got.ench, offers[2].ench);
+        assert!(srv.clients[&1].craft[1].is_none(), "trois cristaux payes");
+        assert_eq!(e::level_of(srv.clients[&1].xp).0, 27, "trois niveaux payes");
+        // Deja enchante : l'autel ne propose plus rien.
+        srv.on_msg(1, ClientMsg::Enchant { index: 0 });
+        assert_eq!(srv.clients[&1].craft[0].unwrap().ench, got.ench);
+        // Enclume : deux pioches se reunissent, leurs enchantements aussi.
+        srv.close_window(1);
+        srv.open_window(1, Win::Anvil);
+        let pick = Stack::new(items::tool_id(items::PICK, 2), 1);
+        {
+            let cl = srv.clients.get_mut(&1).unwrap();
+            cl.craft[0] = Some(Stack { dur: 10, ench: e::Ench::NONE.with(e::EFFICIENCY, 2), ..pick });
+            cl.craft[1] = Some(Stack { dur: 20, ench: e::Ench::NONE.with(e::EFFICIENCY, 2).with(e::UNBREAKING, 1), ..pick });
+        }
+        srv.on_msg(1, ClientMsg::Forge);
+        let out = srv.clients[&1].craft[0].unwrap();
+        assert_eq!(out.ench.list(), vec![(e::EFFICIENCY, 3), (e::UNBREAKING, 1)]);
+        assert_eq!(out.dur, 30 + items::max_dur(pick.id) * 12 / 100);
+        assert!(srv.clients[&1].craft[1].is_none());
+        assert_eq!(e::level_of(srv.clients[&1].xp).0, 27 - 5);
+        // Un objet enchante survit a la sauvegarde ; un objet ordinaire s'ecrit comme avant.
+        let bytes = bincode::serialize(&Some(out)).unwrap();
+        assert_eq!(bincode::deserialize::<Slot>(&bytes).unwrap(), Some(out));
+        assert_eq!(bincode::serialize(&pick).unwrap(), bincode::serialize(&(pick.id, pick.n, pick.dur)).unwrap());
+        // La mort emporte l'experience.
+        srv.kill(1);
+        assert_eq!(srv.clients[&1].xp, 0);
+    }
+
+    #[test]
+    fn enchanted_tools_mine_faster_and_richer() {
+        use shared::ench as e;
+        let pick = Some(items::tool_id(items::PICK, 2));
+        let (slow, fast) = (items::break_time_with(STONE, pick, 0).unwrap(), items::break_time_with(STONE, pick, 5).unwrap());
+        assert!(fast < slow / 4.0, "{fast} contre {slow}");
+        assert_eq!(items::break_time_with(STONE, None, 5), items::break_time(STONE, None), "sans le bon outil, l'efficacite ne sert pas");
+        let mut rng = shared::util::Rng::new(3);
+        assert_eq!(items::drops_with(DIAMOND_ORE, 0, &mut rng, e::Ench::NONE.with(e::SILK_TOUCH, 1)), vec![Stack::new(DIAMOND_ORE as u16, 1)]);
+        let rich: u32 = (0..200).map(|_| items::drops_with(DIAMOND_ORE, 0, &mut rng, e::Ench::NONE.with(e::FORTUNE, 3)).iter().map(|s| s.n as u32).sum::<u32>()).sum();
+        let poor: u32 = (0..200).map(|_| items::drops(DIAMOND_ORE, 0, &mut rng).iter().map(|s| s.n as u32).sum::<u32>()).sum();
+        assert!(rich as f64 > poor as f64 * 1.7, "{rich} contre {poor}");
     }
 
     #[test]

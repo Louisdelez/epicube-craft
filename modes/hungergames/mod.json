@@ -1,0 +1,14 @@
+{
+  "id": "hungergames",
+  "name": "Hunger Games",
+  "version": "1.0.0",
+  "description": "Les tributs partent de la corne d'abondance : on s'arme dans les coffres de l'arène, on survit, le dernier gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Hunger Games",
+    "about": "Les tributs partent de la corne d'abondance : on s'arme dans les coffres de l'arène, on survit, le dernier gagne.",
+    "tags": ["pvp", "survie", "arene"],
+    "players": 12,
+    "game": "aventure"
+  }
+}

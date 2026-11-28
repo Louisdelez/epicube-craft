@@ -1,0 +1,18 @@
+{
+  "id": "teamfortress",
+  "name": "TeamFortress",
+  "version": "1.0.0",
+  "description": "Quatre classes, deux équipes, une mallette à voler dans la base adverse : la première à trois gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "TeamFortress",
+    "about": "Quatre classes, deux équipes, une mallette à voler dans la base adverse : la première à trois gagne.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "classes"
+    ],
+    "players": 12,
+    "game": "aventure"
+  }
+}

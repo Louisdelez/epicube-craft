@@ -1,0 +1,18 @@
+{
+  "id": "sheepwars",
+  "name": "SheepWars",
+  "version": "1.0.0",
+  "description": "Deux navires dans le ciel, des arcs, des sabres… et des moutons aux pouvoirs délirants à lancer sur l'ennemi.",
+  "author": "Epicube",
+  "mode": {
+    "name": "SheepWars",
+    "about": "Deux navires dans le ciel, des arcs, des sabres… et des moutons aux pouvoirs délirants à lancer sur l'ennemi.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "moutons"
+    ],
+    "players": 10,
+    "game": "aventure"
+  }
+}

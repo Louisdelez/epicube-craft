@@ -1,0 +1,18 @@
+{
+  "id": "skyfall",
+  "name": "SkyFall",
+  "version": "1.0.0",
+  "description": "Le sol s'efface sous vos pas, trois étages au-dessus du vide : le dernier à ne pas tomber gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "SkyFall",
+    "about": "Le sol s'efface sous vos pas, trois étages au-dessus du vide : le dernier à ne pas tomber gagne.",
+    "tags": [
+      "mini-jeu",
+      "reflexes",
+      "chute"
+    ],
+    "players": 12,
+    "game": "aventure"
+  }
+}

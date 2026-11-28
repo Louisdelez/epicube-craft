@@ -1,0 +1,18 @@
+{
+  "id": "gladiators",
+  "name": "Gladiators",
+  "version": "1.0.0",
+  "description": "Deux équipes dans l'arène, des manches sans retour : la première à trois manches gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "Gladiators",
+    "about": "Deux équipes dans l'arène, des manches sans retour : la première à trois manches gagne.",
+    "tags": [
+      "pvp",
+      "equipes",
+      "arene"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}

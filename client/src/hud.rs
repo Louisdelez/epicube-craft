@@ -96,6 +96,15 @@ impl App {
                     slots.push((SlotRef::Cont(i), x0 + (i % 9) as f32 * cell, yt + (i / 9) as f32 * cell));
                 }
             }
+            WindowKind::Enchant => {
+                // L'objet a enchanter, et sous lui les cristaux qui paient.
+                slots.push((SlotRef::Craft(0), x0 + 0.5 * cell, yt + 0.3 * cell));
+                slots.push((SlotRef::Craft(1), x0 + 0.5 * cell, yt + 1.6 * cell));
+            }
+            WindowKind::Anvil => {
+                slots.push((SlotRef::Craft(0), x0 + cell, yt + 0.2 * cell));
+                slots.push((SlotRef::Craft(1), x0 + 3.0 * cell, yt + 0.2 * cell));
+            }
             WindowKind::Trade | WindowKind::None => {}
         }
         // Echanges : deux colonnes de trois offres, a la place de la grille.
@@ -145,6 +154,34 @@ impl App {
         }
     }
 
+    /// Place des offres de l'autel : x, y de la premiere, largeur et hauteur de chacune.
+    fn offer_box(l: &Layout, s: f32) -> [f32; 4] {
+        let [px, py, pw, _] = l.panel;
+        [px + 8.0 * s + 2.0 * l.cell, py + 18.0 * s, pw - 16.0 * s - 2.0 * l.cell, l.cell - 2.0 * s]
+    }
+
+    /// Place du bouton de l'enclume.
+    fn forge_box(l: &Layout, s: f32) -> [f32; 4] {
+        let [px, py, _, _] = l.panel;
+        [px + 8.0 * s + 5.0 * l.cell, py + 18.0 * s + 0.2 * l.cell, 3.5 * l.cell, l.cell]
+    }
+
+    /// A-t-on le niveau demande ? (En creatif, tout est offert.)
+    fn pays(&self, levels: u32) -> bool {
+        self.mode == shared::rules::CREATIVE || self.xp_level >= levels
+    }
+
+    /// Peut-on accepter l'offre `i` de l'autel : le niveau affiche, et un cristal par rang.
+    fn can_enchant(&self, i: usize) -> bool {
+        let crystals = self.craft.get(1).copied().flatten().filter(|st| st.id == shared::blocks::CRYSTAL as u16).map_or(0, |st| st.n as usize);
+        self.offers.get(i).is_some_and(|o| self.pays(o.cost as u32) && (self.mode == shared::rules::CREATIVE || crystals > i))
+    }
+
+    /// Ce que donnerait l'enclume, et son prix en niveaux.
+    fn forge_cost(&self) -> Option<u32> {
+        server::forged(self.craft.first().copied().flatten(), self.craft.get(1).copied().flatten()).map(|out| shared::ench::anvil_cost(out.ench))
+    }
+
     /// Clic dans une fenetre ouverte : case d'inventaire ou recette.
     pub fn ui_click(&mut self, inp: &Input, w: f32, h: f32, s: f32, right: bool) {
         let l = self.layout(w, h, s);
@@ -161,6 +198,20 @@ impl App {
         } else if let Some((idx, _, _)) = l.trades.iter().find(|(_, x, y)| inp.mouse.0 >= *x && inp.mouse.0 < x + 4.0 * l.cell && inp.mouse.1 >= *y && inp.mouse.1 < y + l.cell) {
             crate::audio::play("pieces", 0.7);
             self.net.send(ClientMsg::Trade { index: *idx as u8 });
+        } else if self.window == WindowKind::Enchant {
+            // Les trois offres de l'autel, a droite des cases.
+            let [x, y, bw, bh] = Self::offer_box(&l, s);
+            for i in 0..self.offers.len().min(3) {
+                let oy = y + i as f32 * (bh + 2.0 * s);
+                if inp.mouse.0 >= x && inp.mouse.0 < x + bw && inp.mouse.1 >= oy && inp.mouse.1 < oy + bh && self.can_enchant(i) {
+                    self.net.send(ClientMsg::Enchant { index: i as u8 });
+                }
+            }
+        } else if self.window == WindowKind::Anvil {
+            let [x, y, bw, bh] = Self::forge_box(&l, s);
+            if inp.mouse.0 >= x && inp.mouse.0 < x + bw && inp.mouse.1 >= y && inp.mouse.1 < y + bh && self.forge_cost().is_some_and(|c| self.pays(c)) {
+                self.net.send(ClientMsg::Forge);
+            }
         }
     }
 
@@ -229,6 +280,8 @@ impl App {
             WindowKind::Furnace => "Four",
             WindowKind::Chest => "Coffre",
             WindowKind::Trade => &self.trade_title,
+            WindowKind::Enchant => "Autel d'enchantement",
+            WindowKind::Anvil => "Enclume",
             WindowKind::None => "",
         };
         ui.text(px + 8.0 * s, py + 6.0 * s, s, title, [1.0, 0.9, 0.6, 1.0]);
@@ -239,8 +292,14 @@ impl App {
             slot(ui, x + s, y + s, cell - 2.0 * s, s, hover);
             if let Some(st) = self.slot_stack(*r) {
                 ui.item(x + s, y + s, cell - 2.0 * s, &st);
+                if !st.ench.is_empty() {
+                    // Un objet enchante luit.
+                    let glow = 0.16 + 0.08 * (self.clock * 3.0 + x * 0.05).sin();
+                    ui.rect(x + s, y + s, cell - 2.0 * s, cell - 2.0 * s, [0.66, 0.36, 1.0, glow]);
+                }
                 if hover && self.cursor.is_none() {
                     tip.push(items::name(st.id));
+                    tip.extend(st.ench.list().into_iter().map(|(e, l)| format!("  {}", shared::ench::label(e, l))));
                     let points = items::armor_points(st.id);
                     if points > 0.0 {
                         let tough = items::armor_toughness(st.id);
@@ -282,6 +341,58 @@ impl App {
                 ui.text(ax, ay + 5.0 * s, s, "=>", WHITE);
                 if !table {
                     self.draw_doll(ui, inp, models, x0 + cell + 2.0 * s, yt + s, 3.0 * cell - 2.0 * s, 4.0 * cell - 2.0 * s, s);
+                }
+            }
+            WindowKind::Enchant => {
+                let [x, y, bw, bh] = Self::offer_box(&l, s);
+                if self.offers.is_empty() {
+                    let note = if self.craft.first().copied().flatten().is_some_and(|st| !st.ench.is_empty()) { "Déjà enchanté" } else { "Posez un objet" };
+                    ui.text(x + 4.0 * s, y + 6.0 * s, s, note, [0.7, 0.72, 0.8, 1.0]);
+                }
+                for (i, o) in self.offers.iter().take(3).enumerate() {
+                    let oy = y + i as f32 * (bh + 2.0 * s);
+                    let ok = self.can_enchant(i);
+                    let hover = ok && inp.mouse.0 >= x && inp.mouse.0 < x + bw && inp.mouse.1 >= oy && inp.mouse.1 < oy + bh;
+                    let bg = match (ok, hover) {
+                        (true, true) => [0.42, 0.3, 0.66, 1.0],
+                        (true, false) => [0.3, 0.22, 0.48, 1.0],
+                        _ => [0.16, 0.15, 0.2, 1.0],
+                    };
+                    ui.bevel(x, oy, bw, bh, s, bg, PANEL_LIGHT, PANEL_DARK);
+                    let ink = if ok { WHITE } else { [0.55, 0.56, 0.62, 1.0] };
+                    ui.text(x + 4.0 * s, oy + 4.0 * s, s, &format!("{} ...", shared::ench::label(o.shown.0, o.shown.1)), ink);
+                    // Le niveau demande, puis ce que l'offre coute : son rang en niveaux et en cristaux.
+                    let cost = format!("niv. {}  -{}", o.cost, i + 1);
+                    ui.text(x + bw - Ui::text_width(&cost, s) - 4.0 * s, oy + 4.0 * s, s, &cost, if ok { [0.6, 1.0, 0.5, 1.0] } else { [1.0, 0.5, 0.5, 1.0] });
+                }
+                let shelves = format!("Bibliothèques : {} / 15", self.shelves);
+                ui.text(px + pw - Ui::text_width(&shelves, s) - 8.0 * s, py + 6.0 * s, s, &shelves, [0.7, 0.72, 0.8, 1.0]);
+            }
+            WindowKind::Anvil => {
+                ui.text(x0 + 2.2 * cell, yt + 0.2 * cell + 5.0 * s, s, "+", WHITE);
+                let [x, y, bw, bh] = Self::forge_box(&l, s);
+                match self.forge_cost() {
+                    Some(cost) => {
+                        let ok = self.pays(cost);
+                        let hover = ok && inp.mouse.0 >= x && inp.mouse.0 < x + bw && inp.mouse.1 >= y && inp.mouse.1 < y + bh;
+                        let bg = match (ok, hover) {
+                            (true, true) => [0.30, 0.66, 0.38, 1.0],
+                            (true, false) => [0.22, 0.5, 0.3, 1.0],
+                            _ => [0.16, 0.15, 0.2, 1.0],
+                        };
+                        ui.bevel(x, y, bw, bh, s, bg, PANEL_LIGHT, PANEL_DARK);
+                        let text = format!("Forger : niv. {cost}");
+                        ui.text(x + ((bw - Ui::text_width(&text, s)) / 2.0).floor(), y + 5.0 * s, s, &text, if ok { WHITE } else { [1.0, 0.5, 0.5, 1.0] });
+                        // Ce que l'on obtiendra.
+                        if let Some(out) = server::forged(self.craft.first().copied().flatten(), self.craft.get(1).copied().flatten()) {
+                            let list: Vec<String> = out.ench.list().into_iter().map(|(e, l)| shared::ench::label(e, l)).collect();
+                            // Sur deux colonnes, sous les cases.
+                            for (k, line) in list.iter().take(6).enumerate() {
+                                ui.text(x0 + cell + (k / 3) as f32 * 4.2 * cell, yt + 1.4 * cell + (k % 3) as f32 * 9.0 * s, s, line, [0.8, 0.66, 1.0, 1.0]);
+                            }
+                        }
+                    }
+                    None => ui.text(x, y + 5.0 * s, s, "Deux objets pareils", [0.7, 0.72, 0.8, 1.0]),
                 }
             }
             WindowKind::Furnace => {
@@ -526,6 +637,9 @@ impl App {
             let weapon = shared::items::weapon(held);
             let gauge = if self.draw_t > 0.0 {
                 Some(shared::items::draw_power(self.draw_t as f64) as f32)
+            } else if self.shield_off > 0.0 && held == Some(shared::items::SHIELD) {
+                // Bouclier abattu par une hache : le temps qu'il reste avant de pouvoir le relever.
+                Some(1.0 - self.shield_off / 5.0)
             } else {
                 let k = self.since_hit * weapon.speed as f32;
                 (weapon.speed < 3.9 && k < 1.0).then_some(k)
@@ -553,6 +667,24 @@ impl App {
             slot(ui, x + s, by + s, cell - 2.0 * s, s, false);
             if let Some(st) = self.inv.get(i).copied().flatten() {
                 ui.item(x + 2.0 * s, by + 2.0 * s, 16.0 * s, &st);
+            }
+        }
+        for i in 0..9 {
+            if self.inv.get(i).copied().flatten().is_some_and(|st| !st.ench.is_empty()) {
+                let glow = 0.16 + 0.08 * (self.clock * 3.0 + i as f32).sin();
+                ui.rect(bx + i as f32 * cell + 2.0 * s, by + 2.0 * s, 16.0 * s, 16.0 * s, [0.66, 0.36, 1.0, glow]);
+            }
+        }
+        // Experience : une barre fine au-dessus de la barre rapide, et le niveau en son milieu.
+        if !shared::rules::invulnerable(self.mode) && (self.xp_level > 0 || self.xp_progress > 0.0) {
+            let (xw, xy) = (9.0 * cell, by - 5.0 * s);
+            ui.rect(bx, xy, xw, 2.0 * s, [0.05, 0.08, 0.05, 0.8]);
+            ui.rect(bx, xy, (xw * self.xp_progress.clamp(0.0, 1.0)).floor(), 2.0 * s, [0.5, 1.0, 0.3, 1.0]);
+            if self.xp_level > 0 {
+                let text = self.xp_level.to_string();
+                let tx = (bx + (xw - Ui::text_width(&text, s)) / 2.0).floor();
+                ui.text(tx + s, xy - 8.0 * s + s, s, &text, [0.0, 0.0, 0.0, 0.8]);
+                ui.text(tx, xy - 8.0 * s, s, &text, [0.5, 1.0, 0.3, 1.0]);
             }
         }
         // Case choisie : cadre clair par-dessus.

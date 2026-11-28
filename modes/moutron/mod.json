@@ -1,0 +1,18 @@
+{
+  "id": "moutron",
+  "name": "MouTron",
+  "version": "1.0.0",
+  "description": "Chacun laisse derrière lui une traînée de couleur : y marcher, c'est perdre. Le dernier gagne.",
+  "author": "Epicube",
+  "mode": {
+    "name": "MouTron",
+    "about": "Chacun laisse derrière lui une traînée de couleur : y marcher, c'est perdre. Le dernier gagne.",
+    "tags": [
+      "mini-jeu",
+      "arcade",
+      "reflexes"
+    ],
+    "players": 8,
+    "game": "aventure"
+  }
+}
