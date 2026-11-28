@@ -17,8 +17,21 @@ pub struct Net {
 
 impl Net {
     pub fn connect(addr: &str) -> std::io::Result<Net> {
-        let stream = TcpStream::connect(addr)?;
+        // « adresse#salle » : une partie relayee par Epicube Hub. On demande la salle, puis tout se passe
+        // comme avec un serveur ordinaire.
+        let (host, room) = addr.split_once('#').map_or((addr, None), |(h, r)| (h, Some(r)));
+        let mut stream = TcpStream::connect(host)?;
         stream.set_nodelay(true)?;
+        if let Some(room) = room {
+            use std::io::{Read, Write};
+            stream.write_all(format!("JOIN {room}\n").as_bytes())?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(15)))?;
+            let mut reply = [0u8; 3];
+            if stream.read_exact(&mut reply).is_err() || &reply != b"OK\n" {
+                return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "cette partie n'est plus en ligne"));
+            }
+            stream.set_read_timeout(None)?;
+        }
         let read_half = stream.try_clone()?;
 
         let (in_tx, in_rx) = mpsc::channel::<ServerMsg>();

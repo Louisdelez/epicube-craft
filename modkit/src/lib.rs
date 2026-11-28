@@ -64,6 +64,13 @@ pub mod op {
     pub const DIMENSION: u32 = 36;
     pub const MOB: u32 = 37;
     pub const SOUND: u32 = 38;
+    pub const RULE: u32 = 39;
+    pub const DAMAGE: u32 = 40;
+    pub const SET_HOME: u32 = 41;
+    pub const CLEAR: u32 = 42;
+    pub const TOP: u32 = 43;
+    pub const FILL: u32 = 44;
+    pub const INFO: u32 = 45;
     // Côté client.
     pub const C_LOG: u32 = 100;
     pub const C_SEND: u32 = 102;
@@ -219,6 +226,22 @@ pub mod server {
                 _ => 0,
             }
         }
+        /// Lui retire de la vie, sans que son armure n'y change rien (une zone interdite, un piège).
+        pub fn damage(&self, amount: f64) {
+            call(op::DAMAGE, &[self.id(), amount.into()]);
+        }
+        /// Fixe l'endroit où il revient après sa mort.
+        pub fn set_home(&self, x: f64, y: f64, z: f64) {
+            call(op::SET_HOME, &[self.id(), x.into(), y.into(), z.into()]);
+        }
+        /// Vide son inventaire et retire son armure.
+        pub fn clear(&self) {
+            call(op::CLEAR, &[self.id()]);
+        }
+        /// Affiche un message au centre de son écran.
+        pub fn info(&self, text: &str) {
+            call(op::INFO, &[self.id(), text.into()]);
+        }
         /// Lui fait entendre un bruitage : un son du jeu, ou « mod:fichier ».
         pub fn sound(&self, name: &str, volume: f64) {
             call(op::SOUND, &[self.id(), name.into(), volume.into()]);
@@ -228,6 +251,28 @@ pub mod server {
     /// Écrit dans le journal du serveur.
     pub fn log(text: &str) {
         call(op::LOG, &[text.into()]);
+    }
+
+    /// Affiche un message au centre de l'écran de tous les joueurs.
+    pub fn announce(text: &str) {
+        call(op::INFO, &[Val::Nil, text.into()]);
+    }
+
+    /// Règles de la partie, qu'un mode de jeu peut changer.
+    pub mod rules {
+        use super::*;
+        /// Combat entre joueurs.
+        pub fn pvp(on: bool) {
+            call(op::RULE, &["pvp".into(), Val::Bool(on)]);
+        }
+        /// La vie remonte toute seule quand on a bien mangé.
+        pub fn regen(on: bool) {
+            call(op::RULE, &["regen".into(), Val::Bool(on)]);
+        }
+        /// Les créatures naissent d'elles-mêmes dans le monde.
+        pub fn mobs(on: bool) {
+            call(op::RULE, &["mobs".into(), Val::Bool(on)]);
+        }
     }
 
     /// Écrit une ligne dans le chat de tous les joueurs.
@@ -318,10 +363,11 @@ pub mod server {
         on("interact", move |a| player_of(a).is_none_or(|p| f(&p, cell(&a[2..]), word(a.get(5)))));
     }
 
-    pub fn on_death(f: impl Fn(&Player) + 'static) {
+    /// Un joueur meurt ; `killer` : le pseudo du joueur qui l'a tué, ou vide.
+    pub fn on_death(f: impl Fn(&Player, &str) + 'static) {
         on("death", move |a| {
             if let Some(p) = player_of(a) {
-                f(&p);
+                f(&p, word(a.get(2)));
             }
             true
         });
@@ -766,6 +812,21 @@ pub mod server {
         /// Explosion, d'une puissance de 0,5 à 8.
         pub fn explode(x: f64, y: f64, z: f64, power: f64) {
             call(op::EXPLODE, &[x.into(), y.into(), z.into(), power.into()]);
+        }
+        /// Hauteur du bloc plein le plus haut de cette colonne (le monde s'y charge au besoin).
+        pub fn top(x: i32, z: i32) -> Option<i32> {
+            match call(op::TOP, &[(x as f64).into(), (z as f64).into()])[..] {
+                [Val::Num(y)] => Some(y as i32),
+                _ => None,
+            }
+        }
+        /// Remplit un pavé du même bloc (200 000 blocs au plus) ; renvoie le nombre de blocs posés.
+        pub fn fill(from: [i32; 3], to: [i32; 3], block: &str) -> u32 {
+            let n = |v: i32| Val::Num(v as f64);
+            match call(op::FILL, &[n(from[0]), n(from[1]), n(from[2]), n(to[0]), n(to[1]), n(to[2]), block.into()])[..] {
+                [Val::Num(count)] => count as u32,
+                _ => 0,
+            }
         }
         /// Bruitage entendu autour de cet endroit : un son du jeu, ou « mod:fichier ».
         pub fn sound(name: &str, x: f64, y: f64, z: f64, volume: f64) {

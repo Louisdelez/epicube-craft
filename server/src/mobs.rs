@@ -924,6 +924,10 @@ impl Server {
     }
 
     pub(crate) fn spawn_cycle(&mut self) {
+        // Une partie peut couper la naissance naturelle des creatures (une arene, un Bed Wars).
+        if !self.spawning {
+            return;
+        }
         self.settle_villagers();
         self.spawn_from_steles();
         let day = self.is_day();

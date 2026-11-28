@@ -2,17 +2,45 @@
 
 Le jeu fonctionne toujours avec un serveur, qui fait autorité sur le monde, les inventaires et la survie. En solo, ce serveur tourne à l'intérieur du jeu ; à plusieurs, les joueurs se connectent à une partie ouverte ou à un serveur dédié.
 
-## Jouer à plusieurs sur le réseau local
+## Jouer à plusieurs
 
-1. Chez l'hôte : **Paramètres → Solo en réseau local : oui**, puis lancer une partie solo. Le bouton de l'écran titre indique « Jouer (ouvert au réseau local) ».
-2. Chez les autres : **Multijoueur**, saisir l'adresse de l'hôte (par exemple `192.168.1.20`) et un pseudo.
+Tout passe par l'écran **Multijoueur**. À gauche : la recherche, les modes de jeu avec leur nombre de parties, les amis et le bouton pour héberger. À droite : toutes les parties en ligne, qu'elles tournent dans un centre de données, sur un NAS ou dans le jeu d'un joueur.
 
-La partie écoute sur le port **25600** (TCP). Client et serveur doivent être de la même version : un client d'une autre version du protocole est refusé avec un message clair.
+- **Rejoindre** une partie de la liste. On cherche par nom, mode de jeu, étiquette ou pseudo de l'hôte.
+- **Jouer : (un mode)** : choisir un mode à gauche, puis ce bouton. Le jeu rejoint une partie de ce mode qui a de la place ; s'il n'y en a pas, il en héberge une, publique, et l'on attend les autres.
+- **Héberger une partie** : choisir le mode de jeu, le nom, le nombre de places, et **publique** ou **privée**. La partie tourne dans le jeu de celui qui l'héberge, et s'arrête quand il la quitte.
+
+Il n'y a rien à régler : ni port à ouvrir, ni box à toucher. Une partie que l'on ne peut pas joindre directement (derrière une box, c'est presque toujours le cas) passe d'elle-même par le relais d'Epicube Hub.
+
+### Parties publiques et privées
+
+Une partie **publique** est ouverte à tous. Une partie **privée** figure aussi dans la liste, avec un cadenas : seuls les **amis** de celui qui l'héberge peuvent y entrer.
+
+### Amis
+
+Les amis sont ceux du compte Epicube : la même liste que dans Epicube Hub. Dans **Multijoueur → Amis**, on demande quelqu'un par son pseudo, on accepte ou refuse les demandes, on retire un ami, on voit qui est en ligne et l'on s'écrit ; un message envoyé depuis le jeu se lit aussi dans le lanceur, et inversement. Il faut être connecté à son compte, donc avoir lancé le jeu depuis Epicube Hub.
+
+### Modes de jeu
+
+| Mode | En bref |
+|---|---|
+| Survie | récolter, fabriquer, bâtir, se défendre ; le monde est gardé d'une partie à l'autre |
+| Créatif | tous les objets, vol libre ; le monde est gardé |
+| UHC | la vie ne remonte pas toute seule, la zone rétrécit, le dernier en vie gagne |
+| Bed Wars | des îles dans le ciel, un lit par équipe, une boutique ; la dernière équipe gagne |
+
+UHC et Bed Wars commencent dès que deux joueurs sont là, dans un monde neuf à chaque partie. En survie et en créatif, les mods installés par l'hôte accompagnent la partie ; les autres joueurs les reçoivent en entrant.
+
+Un mode de jeu est un [mod](mods.md#modes-de-jeu) : chacun peut en écrire d'autres. Ceux du jeu sont dans le dossier `modes`.
+
+Client et serveur doivent être de la même version : la liste ne montre que les parties de la version du joueur.
 
 ## Serveur dédié
 
+Un serveur dédié s'inscrit lui aussi à l'annuaire : les joueurs le trouvent dans **Multijoueur**, sans adresse à saisir.
+
 ```bash
-epicube-craft-server --port 25600 --seed 1337 --world monde
+epicube-craft-server --nom "Le Dojo" --mode survie --etiquettes francais,calme --joueurs 20
 ```
 
 | Option | Rôle | Valeur par défaut |
@@ -21,6 +49,12 @@ epicube-craft-server --port 25600 --seed 1337 --world monde
 | `--seed` | graine d'un monde neuf | 1337 |
 | `--world` | nom du monde, dans le dossier `saves` | `serveur` |
 | `--comptes` | `obligatoires` ou `facultatifs` : exiger un compte vérifié | celui de `comptes.txt` |
+| `--nom` | nom du serveur dans la liste | `Serveur Epicube Craft` |
+| `--mode`, `--nom-du-mode` | mode de jeu : son identifiant, et son nom affiché | `survie` |
+| `--etiquettes` | étiquettes, séparées par des virgules | aucune |
+| `--joueurs` | nombre de places | 20 |
+| `--prive` | le serveur figure dans la liste avec un cadenas | public |
+| `--sans-annuaire` | le serveur ne s'annonce pas | il s'annonce |
 
 Les [mods](mods.md) déposés dans le dossier `mods`, à côté du serveur, sont chargés au démarrage et envoyés automatiquement aux joueurs qui le rejoignent.
 
@@ -43,7 +77,7 @@ epicube-craft [--solo] [--connect hote:port] [--name Pseudo] [--seed 1337] [--wo
 | `--name` | pseudo |
 | `--seed` | graine du monde à créer (chiffres ou texte) |
 | `--world` | nom du monde |
-| `--lan` | ouvre la partie solo au réseau local |
+| `--heberger mode` | héberge directement une partie de ce mode (`--prive` : privée, `--world` : son monde) |
 | `--export-assets` | écrit textures et modèles dans le dossier `assets`, puis quitte |
 | `--item-sheet fichier.png` | écrit une planche de toutes les icônes d'objets, puis quitte |
 
@@ -85,6 +119,7 @@ Un monde créé avant l'existence de ce fichier garde la triche autorisée.
 
 ## Limites connues
 
+- Une partie hébergée derrière une box passe par le relais d'Epicube Hub : tout son trafic transite par lui, avec un peu plus de délai qu'une connexion directe.
 - Pas de liste blanche, de bannissement ni de rôles : tout joueur connecté a les mêmes droits, ceux que donnent les règles du monde.
 - Les échanges ne sont pas chiffrés. Sans `comptes=obligatoires`, les pseudos des joueurs sans compte ne sont pas authentifiés.
 - La voix passe par le serveur, sur la même connexion que le reste : environ 16 ko par seconde et par joueur qui parle.

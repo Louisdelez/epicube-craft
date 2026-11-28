@@ -3,7 +3,7 @@ use crate::items::Slot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Nature d'une ligne de chat.
 pub mod chat {
@@ -82,6 +82,8 @@ pub enum ClientMsg {
     DropItem { all: bool },
     /// Coup porte a une creature.
     Attack { id: u32 },
+    /// Coup porte a un autre joueur (si la partie autorise le combat entre joueurs).
+    Hit { id: u32 },
     /// Clic droit sur une creature (la nourrir).
     Interact { id: u32 },
     Respawn,

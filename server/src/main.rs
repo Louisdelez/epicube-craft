@@ -1,5 +1,7 @@
 //! Serveur dedie Epicube Craft.
 //! Usage : epicube-craft-server [--port 25600] [--seed 1337] [--world monde] [--comptes obligatoires|facultatifs]
+//!         [--nom "Mon serveur"] [--mode survie] [--etiquettes pvp,francais] [--joueurs 20] [--prive] [--sans-annuaire]
+//! Le serveur s'inscrit a l'annuaire d'Epicube Hub : les joueurs le trouvent dans l'ecran Multijoueur.
 //! Les regles d'entree (comptes des joueurs) sont lues dans comptes.txt, a cote du serveur.
 //! Ctrl+C sauvegarde le monde puis arrete le serveur.
 use std::net::TcpListener;
@@ -45,7 +47,26 @@ fn main() {
     for p in problems {
         eprintln!("Mod ignoré - {p}");
     }
-    let mut handle = match server::start_with_mods(listener, seed, Some(dir.clone()), accounts, mods) {
+    let flag = |name: &str| args.iter().any(|a| a == name);
+    let mode = arg("--mode").unwrap_or_else(|| "survie".to_string());
+    let party = server::party::Party {
+        name: arg("--nom").unwrap_or_else(|| "Serveur Epicube Craft".to_string()),
+        mode_name: arg("--nom-du-mode").unwrap_or_else(|| {
+            let mut c = mode.chars();
+            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        }),
+        mode,
+        tags: arg("--etiquettes").map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default(),
+        max_players: arg("--joueurs").and_then(|s| s.parse().ok()).unwrap_or(20),
+        host_name: String::new(),
+        // Un serveur dedie prive figure dans l'annuaire avec son cadenas ; « --sans-annuaire » l'en retire.
+        private: flag("--prive"),
+        host: None,
+        token: None,
+        hub: if flag("--sans-annuaire") { String::new() } else { server::party::hub() },
+        relay: None,
+    };
+    let mut handle = match server::start_party(listener, seed, Some(dir.clone()), accounts, mods, party) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("Impossible de demarrer le serveur : {e}");

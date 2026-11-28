@@ -117,6 +117,8 @@ struct Reg {
     smelts: Vec<(String, String)>,
     ores: Vec<NewOre>,
     mobs: Vec<NewMob>,
+    /// Regles fixees au chargement du mod, appliquees une fois la partie prete : (regle, valeur).
+    rules: Vec<(String, bool)>,
     store: HashMap<String, String>,
     store_dirty: bool,
     errors: u32,
@@ -502,6 +504,94 @@ fn api(mod_id: &str, reg: &Rc<RefCell<Reg>>) -> Api {
                     nothing()
                 })
             }
+            op::RULE => {
+                let on = !matches!(a.get(1), Some(Val::Bool(false)));
+                let name = cmd::plain(text(a, 0)?);
+                if !matches!(name.as_str(), "pvp" | "combat" | "regen" | "regeneration" | "mobs" | "creatures") {
+                    return Err(format!("règle inconnue : {name} (pvp, regen, mobs)"));
+                }
+                // Au chargement du mod, la partie n'existe pas encore : la regle attend qu'elle soit prete.
+                if reg.borrow().loading {
+                    reg.borrow_mut().rules.push((name, on));
+                    return nothing();
+                }
+                srv(|s| {
+                    s.set_rule(&name, on);
+                    nothing()
+                })
+            }
+            op::DAMAGE => srv(|s| {
+                let dmg = num(a, 1)?;
+                let who = pid(a)?;
+                // Un coup que l'armure ne pare pas : la bordure d'un UHC, un piege.
+                if let Some(c) = s.clients.get_mut(&who).filter(|c| c.ready && !c.dead && !shared::rules::invulnerable(c.mode) && dmg.is_finite() && dmg > 0.0) {
+                    c.hp -= dmg.min(1000.0);
+                    c.stats_dirty = true;
+                }
+                nothing()
+            }),
+            op::SET_HOME => srv(|s| {
+                let (x, y, z) = (num(a, 1)?, num(a, 2)?, num(a, 3)?);
+                cell(&a[1..])?;
+                if let Some(c) = s.clients.get_mut(&pid(a)?).filter(|c| c.ready) {
+                    c.home = Some([x, y, z]);
+                }
+                nothing()
+            }),
+            op::CLEAR => srv(|s| {
+                if let Some(c) = s.clients.get_mut(&pid(a)?).filter(|c| c.ready) {
+                    c.inv = [None; 36];
+                    c.armor = [None; 4];
+                    (c.cursor, c.craft) = (None, [None; 9]);
+                    c.inv_dirty = true;
+                }
+                nothing()
+            }),
+            op::TOP => {
+                let (x, z) = (num(a, 0)?, num(a, 1)?);
+                let p = cell(&[Val::Num(x), Val::Num(0.0), Val::Num(z)])?;
+                srv(|s| {
+                    s.world.ensure((p[0] >> 4, p[2] >> 4));
+                    let top = (1..shared::chunk::H as i32).rev().find(|&y| s.world.get([p[0], y, p[2]]).is_some_and(|(b, m)| blocks::solid(b, m)));
+                    Ok(top.map(|y| Val::Num(y as f64)).into_iter().collect())
+                })
+            }
+            op::FILL => {
+                let (p, q) = (cell(a)?, cell(a.get(3..).unwrap_or_default())?);
+                let word = text(a, 6)?;
+                let b = block_from(word).ok_or_else(|| format!("bloc inconnu : {word}"))?;
+                let (lo, hi) = ([p[0].min(q[0]), p[1].min(q[1]), p[2].min(q[2])], [p[0].max(q[0]), p[1].max(q[1]), p[2].max(q[2])]);
+                let volume = (0..3).map(|k| (hi[k] - lo[k] + 1) as i64).product::<i64>();
+                if volume > 200_000 {
+                    return Err("world.fill : 200 000 blocs au plus d'un coup".into());
+                }
+                srv(|s| {
+                    let mut n = 0;
+                    for cx in (lo[0] >> 4)..=(hi[0] >> 4) {
+                        for cz in (lo[2] >> 4)..=(hi[2] >> 4) {
+                            s.world.ensure((cx, cz));
+                        }
+                    }
+                    for y in lo[1]..=hi[1] {
+                        for z in lo[2]..=hi[2] {
+                            for x in lo[0]..=hi[0] {
+                                n += s.world.set([x, y, z], b, 0) as u32;
+                            }
+                        }
+                    }
+                    Ok(vec![Val::Num(n as f64)])
+                })
+            }
+            op::INFO => {
+                let line: String = text(a, 1)?.chars().filter(|c| !c.is_control()).take(100).collect();
+                srv(|s| {
+                    match a.first() {
+                        Some(Val::Num(who)) => s.info(*who as u32, &line),
+                        _ => s.broadcast_all(ServerMsg::Info { text: line }, None),
+                    }
+                    nothing()
+                })
+            }
             op::DIMENSION => srv(|s| Ok(s.clients.get(&pid(a)?).map(|c| Val::Num(c.dim as f64)).into_iter().collect())),
             op::STORE_GET => Ok(reg.borrow().store.get(text(a, 0)?).map(|v| Val::Str(v.clone())).into_iter().collect()),
             op::STORE_SET => {
@@ -597,13 +687,18 @@ fn api(mod_id: &str, reg: &Rc<RefCell<Reg>>) -> Api {
             }
             op::GET_BLOCK => {
                 let p = cell(a)?;
-                srv(|s| Ok(s.world.get(p).map(|(b, _)| Val::Str(block_word(b))).into_iter().collect()))
+                srv(|s| {
+                    s.world.ensure((p[0] >> 4, p[2] >> 4));
+                    Ok(s.world.get(p).map(|(b, _)| Val::Str(block_word(b))).into_iter().collect())
+                })
             }
             op::SET_BLOCK => {
                 let p = cell(a)?;
                 let word = text(a, 3)?;
                 let b = block_from(word).ok_or_else(|| format!("bloc inconnu : {word}"))?;
                 srv(|s| {
+                    // Le monde se charge la ou le script ecrit : il peut batir une arene loin de tout joueur.
+                    s.world.ensure((p[0] >> 4, p[2] >> 4));
                     let Some((old, _)) = s.world.get(p) else { return Ok(vec![Val::Bool(false)]) };
                     if old != b && old != AIR {
                         // Un coffre rend son contenu, un poussoir part avec sa tete.
@@ -638,6 +733,7 @@ fn prelude() -> String {
         ("COUNT", op::COUNT), ("TAKE", op::TAKE), ("HELD", op::HELD), ("SET_MODE", op::SET_MODE), ("HUNGER", op::HUNGER),
         ("SET_HUNGER", op::SET_HUNGER), ("SPAWN", op::SPAWN), ("DROP", op::DROP), ("EXPLODE", op::EXPLODE), ("DIMENSION", op::DIMENSION),
         ("MOB", op::MOB), ("SOUND", op::SOUND),
+        ("RULE", op::RULE), ("DAMAGE", op::DAMAGE), ("SET_HOME", op::SET_HOME), ("CLEAR", op::CLEAR), ("TOP", op::TOP), ("FILL", op::FILL), ("INFO", op::INFO),
     ];
     let table: Vec<String> = ops.iter().map(|(n, v)| format!("{n}={v}")).collect();
     format!("local OP = {{{}}}\n{PRELUDE}", table.join(","))
@@ -692,6 +788,10 @@ function Player:hunger() return call(OP.HUNGER, self.id) end
 function Player:set_hunger(v) call(OP.SET_HUNGER, self.id, v) end
 function Player:dimension() return call(OP.DIMENSION, self.id) end
 function Player:sound(name, volume) call(OP.SOUND, self.id, name, volume or 1) end
+function Player:damage(amount) call(OP.DAMAGE, self.id, amount) end
+function Player:set_home(x, y, z) call(OP.SET_HOME, self.id, x, y, z) end
+function Player:clear() call(OP.CLEAR, self.id) end
+function Player:info(text) call(OP.INFO, self.id, tostring(text)) end
 
 function players()
   local flat, out = { call(OP.PLAYERS) }, {}
@@ -699,6 +799,10 @@ function players()
   return out
 end
 function say(text) call(OP.SAY, tostring(text)) end
+-- Message au centre de l'ecran de tous les joueurs.
+function announce(text) call(OP.INFO, nil, tostring(text)) end
+-- Regles de la partie : rules.set("pvp", false), rules.set("regen", false), rules.set("mobs", false).
+rules = { set = function(name, on) call(OP.RULE, name, on ~= false) end }
 
 world = {
   get = function(x, y, z) return call(OP.GET_BLOCK, x, y, z) end,
@@ -709,6 +813,8 @@ world = {
   drop = function(item, n, x, y, z) call(OP.DROP, item, n, x, y, z) end,
   explode = function(x, y, z, power) call(OP.EXPLODE, x, y, z, power or 3) end,
   sound = function(name, x, y, z, volume) call(OP.SOUND, nil, name, volume or 1, x, y, z) end,
+  top = function(x, z) return call(OP.TOP, x, z) end,
+  fill = function(x1, y1, z1, x2, y2, z2, block) return call(OP.FILL, x1, y1, z1, x2, y2, z2, block) end,
 }
 items = {
   register = function(i)
@@ -1046,6 +1152,11 @@ impl Host {
         })
     }
 
+    /// Regles que les mods ont fixees a leur chargement.
+    pub(crate) fn initial_rules(&self) -> Vec<(String, bool)> {
+        self.mods.iter().filter(|m| m.script.is_some()).flat_map(|m| m.reg.borrow().rules.clone()).collect()
+    }
+
     /// Commandes des mods : (nom, aide).
     pub(crate) fn commands(&self) -> Vec<(String, String)> {
         self.mods.iter().filter(|m| m.script.is_some()).flat_map(|m| m.reg.borrow().commands.clone()).collect()
@@ -1073,6 +1184,15 @@ impl Host {
 }
 
 impl Server {
+    /// Regle qu'un mode de jeu peut changer : combat entre joueurs, vie qui remonte, naissance des creatures.
+    pub(crate) fn set_rule(&mut self, name: &str, on: bool) {
+        match name {
+            "pvp" | "combat" => self.pvp = on,
+            "regen" | "regeneration" => self.regen = on,
+            _ => self.spawning = on,
+        }
+    }
+
     /// Previent les mods ; `player` : le joueur concerne. Faux si un mod refuse l'action.
     pub(crate) fn mod_event(&mut self, event: &str, player: Option<u32>, args: &[Arg]) -> bool {
         self.mod_event_to(None, event, player, args)
@@ -1372,6 +1492,127 @@ mod tests {
         assert!(srv.mobs.is_empty());
         assert_eq!(srv.drops.iter().filter(|d| d.stack.id == heart).map(|d| d.stack.n as u32).sum::<u32>(), 2);
         assert!(chat_lines(&rx).contains(&"mort : essai:golem".to_string()));
+        sm::clear_content();
+    }
+
+    /// Ajoute un second joueur a la partie d'essai.
+    fn second(srv: &mut Server, name: &str) -> Receiver<ServerMsg> {
+        let (tx, rx) = mpsc::channel();
+        let mut c = Client::new(tx, [10.5, 200.0, 10.5]);
+        c.name = name.into();
+        c.ready = true;
+        srv.clients.insert(2, c);
+        rx
+    }
+
+    fn infos(rx: &Receiver<ServerMsg>) -> Vec<String> {
+        rx.try_iter().filter_map(|m| if let ServerMsg::Info { text } = m { Some(text) } else { None }).collect()
+    }
+
+    fn mode(name: &str) -> Pack {
+        Pack::from_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../modes").join(name)).unwrap()
+    }
+
+    #[test]
+    fn a_game_of_uhc() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let pack = mode("uhc");
+        assert_eq!(pack.manifest.mode.as_ref().map(|m| m.name.as_str()), Some("UHC"));
+        let (mut srv, rx) = server(vec![pack]);
+        let rx2 = second(&mut srv, "Ren");
+        // Le mode coupe la vie qui remonte et le combat tant que la partie n'a pas commence.
+        assert!(!srv.regen && !srv.pvp);
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        assert_eq!(srv.clients[&1].mode, shared::rules::ADVENTURE);
+        srv.chat(1, "/uhc demarrer".into());
+        // Les joueurs sont en survie, loin l'un de l'autre, sur la terre ferme.
+        let (a, b) = (Vec3::from(srv.clients[&1].pos), Vec3::from(srv.clients[&2].pos));
+        assert!(a.distance(b) > 100.0, "{a} et {b}");
+        assert_eq!((srv.clients[&1].mode, srv.clients[&2].mode), (shared::rules::SURVIVAL, shared::rules::SURVIVAL));
+        assert!(infos(&rx).iter().any(|t| t.contains("c'est parti")));
+        // Hors de la zone, on perd de la vie.
+        srv.clients.get_mut(&1).unwrap().pos = [5000.0, 200.0, 5000.0];
+        for _ in 0..20 {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.clients[&1].hp < 20.0);
+        // Un joueur meurt de la main de l'autre : il ne reste que le vainqueur.
+        srv.clients.get_mut(&1).unwrap().hit_by = Some((2, Instant::now()));
+        srv.kill(1);
+        let got: Vec<ServerMsg> = rx2.try_iter().collect();
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Chat { text, .. } if text.contains("Aki est elimine par Ren"))));
+        assert!(got.iter().any(|m| matches!(m, ServerMsg::Info { text } if text.contains("Ren remporte l'UHC"))));
+        // Pas de seconde vie : le vaincu revient en spectateur.
+        srv.on_msg(1, ClientMsg::Respawn);
+        assert_eq!(srv.clients[&1].mode, shared::rules::SPECTATOR);
+        sm::clear_content();
+    }
+
+    #[test]
+    fn a_game_of_bed_wars() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut srv, rx) = server(vec![mode("bedwars")]);
+        let rx2 = second(&mut srv, "Ren");
+        assert!(!srv.spawning);
+        srv.mod_event("join", Some(1), &[]);
+        srv.mod_event("join", Some(2), &[]);
+        srv.chat(1, "/bedwars demarrer".into());
+        // Chacun est sur son ile, dans le ciel, avec de quoi commencer ; le combat est ouvert.
+        let (a, b) = (srv.clients[&1].pos, srv.clients[&2].pos);
+        assert!(a[1] > 240.0 && b[1] > 240.0 && (a[0] - b[0]).abs() > 40.0, "{a:?} {b:?}");
+        assert!(srv.pvp && srv.clients[&1].home.is_some());
+        let block = |name: &str| srv.mods.as_ref().unwrap().content.blocks.iter().find(|d| d.key == format!("bedwars:{name}")).unwrap().id;
+        let (red_bed, blue_bed, generator) = (block("lit_rouge"), block("lit_bleu"), block("generateur"));
+        let (ax, az) = (a[0].floor() as i32, a[2].floor() as i32);
+        assert_eq!(srv.world.get([ax, 250, az]).map(|c| c.0), Some(generator));
+        assert_eq!(srv.world.get([ax + 3, 251, az]).map(|c| c.0), Some(red_bed));
+        // On ne casse ni l'arene ni son propre lit ; le lit adverse, si.
+        let at = |p: [i32; 3], word: &str| [Arg::N(p[0] as f64), Arg::N(p[1] as f64), Arg::N(p[2] as f64), Arg::S(word.into())];
+        assert!(!srv.mod_event("break", Some(1), &at([ax, 250, az + 2], "pierre")));
+        assert!(!srv.mod_event("break", Some(1), &at([ax + 3, 251, az], "bedwars:lit_rouge")));
+        assert!(srv.mod_event("break", Some(1), &at([0, 251, 0], "bedwars:lit_bleu")));
+        assert!(infos(&rx2).iter().any(|t| t.contains("Le lit de l'equipe Bleue est detruit par Aki")));
+        let _ = blue_bed;
+        // Un bloc pose par un joueur se casse.
+        assert!(srv.mod_event("place", Some(1), &at([ax, 252, az], "fourrure")));
+        assert!(srv.mod_event("break", Some(2), &at([ax, 252, az], "fourrure")));
+        // La boutique : le fer achete de la fourrure.
+        srv.clients.get_mut(&1).unwrap().inv[5] = Some(Stack::new(items::IRON_INGOT, 4));
+        let before = items::count(&srv.clients[&1].inv, blocks::WOOL as u16);
+        srv.on_msg(1, ClientMsg::ModMsg { mod_id: "bedwars".into(), name: "acheter".into(), data: "1".into() });
+        assert_eq!(items::count(&srv.clients[&1].inv, blocks::WOOL as u16), before + 16);
+        assert_eq!(items::count(&srv.clients[&1].inv, items::IRON_INGOT), 0);
+        // Les generateurs donnent du fer.
+        let drops = srv.drops.len();
+        for _ in 0..40 {
+            srv.mod_event("tick", None, &[]);
+        }
+        assert!(srv.drops.len() > drops);
+        // Sans lit, la mort est definitive : l'equipe rouge gagne.
+        srv.kill(2);
+        assert!(infos(&rx).iter().any(|t| t.contains("L'equipe Rouge remporte la partie")));
+        srv.on_msg(2, ClientMsg::Respawn);
+        assert_eq!(srv.clients[&2].mode, shared::rules::SPECTATOR);
+        sm::clear_content();
+    }
+
+    #[test]
+    fn players_can_fight_each_other_when_the_game_allows_it() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut srv, _rx) = server(vec![]);
+        let _rx2 = second(&mut srv, "Ren");
+        srv.rules.difficulty = shared::rules::NORMAL;
+        srv.clients.get_mut(&1).unwrap().last_hit = Instant::now() - Duration::from_secs(5);
+        srv.on_msg(1, ClientMsg::Hit { id: 2 });
+        assert!(srv.clients[&2].hp < 20.0);
+        // Combat coupe : plus rien ne passe.
+        srv.pvp = false;
+        let hp = srv.clients[&2].hp;
+        srv.clients.get_mut(&1).unwrap().last_hit = Instant::now() - Duration::from_secs(5);
+        srv.clients.get_mut(&2).unwrap().inv_t = 0.0;
+        srv.on_msg(1, ClientMsg::Hit { id: 2 });
+        assert_eq!(srv.clients[&2].hp, hp);
         sm::clear_content();
     }
 }

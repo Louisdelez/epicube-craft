@@ -42,6 +42,8 @@ pub struct Settings {
     pub vol_ambience: f32,
     pub name: String,
     pub address: String,
+    /// Touches du jeu.
+    pub controls: crate::controls::Controls,
 }
 
 impl Default for Settings {
@@ -69,6 +71,7 @@ impl Default for Settings {
             vol_ambience: 0.7,
             name: "Joueur".to_string(),
             address: "127.0.0.1".to_string(),
+            controls: Default::default(),
         }
     }
 }
@@ -108,7 +111,9 @@ impl Settings {
                 "ambiance" => s.vol_ambience = v.parse().unwrap_or(s.vol_ambience).clamp(0.0, 1.0),
                 "pseudo" if !v.is_empty() => s.name = v.chars().take(16).collect(),
                 "adresse" if !v.is_empty() => s.address = v.chars().take(40).collect(),
-                _ => {}
+                _ => {
+                    s.controls.parse(k, v);
+                }
             }
         }
         s
@@ -140,6 +145,7 @@ impl Settings {
             self.name,
             self.address
         );
+        let text = text + &self.controls.to_text();
         if let Err(e) = fs::write(FILE, text) {
             eprintln!("Parametres non enregistres : {e}");
         }

@@ -18,6 +18,8 @@ if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item "target\release\epicube-craft.exe", "target\release\epicube-craft-server.exe" $out
 Copy-Item -Recurse "audio" (Join-Path $out "audio")
+# Les modes de jeu livres avec le jeu (UHC, Bed Wars...).
+Copy-Item -Recurse "modes" (Join-Path $out "modes")
 @"
 Epicube Craft
 
@@ -26,7 +28,7 @@ Lancer le jeu : double-cliquer sur epicube-craft.exe.
 Serveur dedie (facultatif), dans un terminal :
     epicube-craft-server.exe --port 25600 --world monde
 
-Le dossier audio doit rester a cote de l'executable. Les mondes sont enregistres
+Les dossiers audio et modes doivent rester a cote de l'executable. Les mondes sont enregistres
 dans le dossier saves, les reglages dans epicube-craft.cfg.
 
 Il faut une carte graphique compatible Vulkan ou DirectX 12, avec des pilotes a jour.

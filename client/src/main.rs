@@ -9,7 +9,9 @@ mod account;
 mod assets;
 mod atlas;
 mod audio;
+mod browser;
 mod chatbox;
+mod controls;
 mod font;
 mod sounds;
 mod gfx;
@@ -22,6 +24,7 @@ mod mesh;
 mod mesher;
 mod mic;
 mod models;
+mod modes;
 mod mods;
 mod net;
 mod pixels;
@@ -79,6 +82,9 @@ pub struct Input {
     /// Texte tape depuis la derniere image, et nombre de retours arriere.
     pub text: String,
     pub backspace: u32,
+    /// Lettres que viennent de produire des touches : (touche, lettre). Sert a nommer les touches
+    /// d'apres le clavier du joueur.
+    pub typed: Vec<(KeyCode, String)>,
 }
 
 impl Input {
@@ -515,6 +521,8 @@ pub struct App {
     joined: bool,
     /// Mods de la partie : annonces par le serveur, telecharges au besoin, puis charges.
     pub mods: Option<mods::Mods>,
+    /// Touches du joueur, recopiees des parametres a chaque image.
+    keys: controls::Controls,
     lost: Option<String>,
     pos: Vec3,
     vel: Vec3,
@@ -649,6 +657,7 @@ impl App {
             epoch: 0,
             joined: false,
             mods: None,
+            keys: st.controls.clone(),
             lost: None,
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
@@ -1271,17 +1280,19 @@ impl App {
                 self.chat.show("/");
                 return false;
             }
-            if inp.pressed.contains(&KeyCode::KeyT) {
+            if inp.pressed.contains(&self.keys.key(controls::Act::Chat)) {
                 self.chat.show("");
                 return false;
             }
         }
         let mut pause = false;
+        use controls::Act;
+        let keys = self.keys.clone();
         for k in &inp.pressed {
             match k {
-                KeyCode::F3 => self.debug = !self.debug,
-                KeyCode::F6 => self.chunk_borders = !self.chunk_borders,
-                KeyCode::F4 => self.cycle_mode(),
+                k if *k == keys.key(Act::Info) => self.debug = !self.debug,
+                k if *k == keys.key(Act::Borders) => self.chunk_borders = !self.chunk_borders,
+                k if *k == keys.key(Act::Mode) => self.cycle_mode(),
                 KeyCode::Escape => {
                     if self.mods.as_ref().is_some_and(|m| m.screen_open()) {
                         // La fenetre d'un mod se ferme comme celles du jeu.
@@ -1294,28 +1305,17 @@ impl App {
                         pause = true;
                     }
                 }
-                KeyCode::KeyE => {
+                k if *k == keys.key(Act::Inventory) => {
                     if self.window != WindowKind::None {
                         self.close_window();
                     } else if grabbed {
                         self.net.send(ClientMsg::OpenInventory);
                     }
                 }
-                KeyCode::KeyQ if grabbed => self.net.send(ClientMsg::DropItem { all: inp.down(KeyCode::ControlLeft) }),
+                k if *k == keys.key(Act::Drop) && grabbed => self.net.send(ClientMsg::DropItem { all: inp.down(KeyCode::ControlLeft) }),
                 KeyCode::Enter | KeyCode::NumpadEnter if self.dead() => self.net.send(ClientMsg::Respawn),
-                _ if grabbed => {
-                    const DIGITS: [KeyCode; 9] = [
-                        KeyCode::Digit1,
-                        KeyCode::Digit2,
-                        KeyCode::Digit3,
-                        KeyCode::Digit4,
-                        KeyCode::Digit5,
-                        KeyCode::Digit6,
-                        KeyCode::Digit7,
-                        KeyCode::Digit8,
-                        KeyCode::Digit9,
-                    ];
-                    if let Some(i) = DIGITS.iter().position(|d| d == k) {
+                k if grabbed => {
+                    if let Some(i) = keys.slot_of(*k) {
                         self.select(i);
                     }
                 }
@@ -1393,6 +1393,27 @@ impl App {
                 ray_box(eye, dir, min, max).filter(|t| *t < block_t.min(4.0 + weapon.reach as f32)).map(|t| (t, *id))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
+        // Un autre joueur devant le bloc ou la creature ? Le coup est pour lui (si la partie le permet).
+        let rival = self
+            .others
+            .iter()
+            .filter_map(|(id, r)| {
+                let (min, max) = (r.shown - Vec3::new(0.3, 0.0, 0.3), r.shown + Vec3::new(0.3, 1.8, 0.3));
+                ray_box(eye, dir, min, max).filter(|t| *t < block_t.min(4.0 + weapon.reach as f32)).map(|t| (t, *id))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .filter(|(t, _)| mob.is_none_or(|(mt, _)| *t < mt));
+        if let Some((_, id)) = rival {
+            self.target = None;
+            self.dig = None;
+            let ready = self.since_hit >= 1.0 / weapon.speed as f32;
+            if !self.blocking && ((inp.lmb_click && self.since_hit > 0.12) || (inp.lmb && ready)) {
+                self.since_hit = 0.0;
+                self.swing = 0.25;
+                self.net.send(ClientMsg::Hit { id });
+            }
+            return;
+        }
         if let Some((_, id)) = mob {
             self.target = None;
             self.dig = None;
@@ -1475,7 +1496,7 @@ impl App {
                     self.vel = Vec3::ZERO;
                     self.on_ground = true;
                     self.use_cd -= dt;
-                    if grabbed && inp.down(KeyCode::Space) && self.use_cd <= 0.0 {
+                    if grabbed && inp.down(self.keys.key(controls::Act::Jump)) && self.use_cd <= 0.0 {
                         self.use_cd = 0.5;
                         self.net.send(ClientMsg::Interact { id });
                     }
@@ -1496,11 +1517,13 @@ impl App {
         let mut sprint = false;
         let mut down = false;
         if grabbed {
-            wish = fwd * inp.axis(KeyCode::KeyW, KeyCode::KeyS) + right * inp.axis(KeyCode::KeyD, KeyCode::KeyA);
+            use controls::Act;
+            let k = &st.controls;
+            wish = fwd * inp.axis(k.key(Act::Forward), k.key(Act::Back)) + right * inp.axis(k.key(Act::Right), k.key(Act::Left));
             wish = wish.normalize_or_zero();
-            jump = inp.down(KeyCode::Space);
-            sprint = inp.down(KeyCode::ShiftLeft) && self.hunger > 6.0;
-            down = inp.down(KeyCode::ControlLeft);
+            jump = inp.down(k.key(Act::Jump));
+            sprint = inp.down(k.key(Act::Sprint)) && self.hunger > 6.0;
+            down = inp.down(k.key(Act::Down));
         }
         if self.auto_walk > 0.0 {
             self.auto_walk -= dt;
@@ -1682,6 +1705,9 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn frame(&mut self, dt: f32, inp: &Input, gfx: &mut Gfx, grabbed: bool, active: bool, st: &Settings, models: &[Model], shapes: &items3d::Shapes) -> FrameOut {
+        if self.keys != st.controls {
+            self.keys = st.controls.clone();
+        }
         prof::mark("reseau");
         self.poll_net(gfx);
         prof::mark("jeu");
@@ -2086,7 +2112,10 @@ pub enum Screen {
     Title,
     /// Choix du monde et de sa graine.
     Solo,
+    /// Les parties en ligne.
     Multi,
+    /// Reglages de la partie que l'on va heberger.
+    Host,
     Settings,
     Game,
     Pause,
@@ -2113,8 +2142,20 @@ pub struct Shell {
     /// Dans les parametres : la page des volumes est-elle affichee ?
     pub sound_page: bool,
     pub perf_page: bool,
+    /// Page des controles, et l'action dont on attend la nouvelle touche.
+    pub keys_page: bool,
+    pub rebinding: Option<usize>,
     /// La page des mods, quand elle est ouverte.
     pub library: Option<library::Library>,
+    /// L'annuaire des parties en ligne, quand l'ecran Multijoueur est ouvert.
+    pub browser: Option<browser::Browser>,
+    /// Modes de jeu que l'on peut heberger, et la partie que l'on prepare.
+    pub modes: Vec<modes::Mode>,
+    pub host: HostForm,
+    /// La partie que l'on heberge : est-elle publique, et le nom de son mode.
+    pub party: Option<(bool, String)>,
+    /// Monde d'une partie sans lendemain (UHC, Bed Wars...), efface quand elle s'arrete.
+    party_dir: Option<PathBuf>,
     /// Micro ouvert pour le chat vocal, erreur d'ouverture s'il y en a eu une, et test « s'entendre ».
     pub mic: Option<mic::Mic>,
     pub mic_error: Option<String>,
@@ -2135,6 +2176,18 @@ pub struct Shell {
     /// Mode vitrine (EPICUBE_DEMO) : le jeu s'affiche comme en partie, sans capturer la souris
     /// ni se mettre en pause quand la fenetre perd le focus.
     showcase: bool,
+}
+
+/// La partie que l'on s'apprete a heberger.
+pub struct HostForm {
+    /// Rang du mode de jeu choisi dans `Shell::modes`.
+    pub pick: usize,
+    pub name: String,
+    pub public: bool,
+    /// Places ; 0 : celles que propose le mode.
+    pub places: u16,
+    /// Monde, pour les modes qui le gardent d'une partie a l'autre.
+    pub world: String,
 }
 
 /// Construit textures et modeles, puis applique le dossier de ressources s'il existe.
@@ -2205,7 +2258,7 @@ impl Shell {
         // La porte : la touche V en mode « appuyer pour parler », toujours ouverte en mode permanent.
         // Pendant le test « s'entendre », elle s'ouvre aussi depuis les menus.
         let here = playing || self.mic_echo;
-        let held = here && ((mode == 1 && inp.down(KeyCode::KeyV)) || mode == 3);
+        let held = here && ((mode == 1 && inp.down(self.settings.controls.key(controls::Act::Voice))) || mode == 3);
         mic.set(held, mode == 2 && here, self.settings.mic_gate);
         let frames = mic.frames();
         let live = mic.talking() && (playing || self.mic_echo);
@@ -2250,7 +2303,7 @@ impl Shell {
         for p in problems {
             eprintln!("Mod ignoré - {p}");
         }
-        match server::spawn_local(seed, Some(dir), self.settings.lan, packs) {
+        match server::spawn_local(seed, Some(dir), false, packs) {
             Ok(h) => {
                 let addr = format!("127.0.0.1:{}", h.port);
                 self.local = Some(h);
@@ -2268,6 +2321,100 @@ impl Shell {
         if let Some(mut s) = self.local.take() {
             s.stop();
         }
+        self.party = None;
+        // Le monde d'une partie sans lendemain part avec elle.
+        if let Some(dir) = self.party_dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// Ouvre l'ecran Multijoueur : l'annuaire des parties, et les modes que l'on peut heberger.
+    pub fn open_multi(&mut self) {
+        self.modes = modes::available();
+        self.host.pick = self.host.pick.min(self.modes.len().saturating_sub(1));
+        self.browser = Some(browser::Browser::open(self.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone())));
+        self.screen = Screen::Multi;
+        self.field = 1;
+    }
+
+    /// Heberge une partie du mode choisi : le serveur tourne dans le jeu, s'inscrit a l'annuaire
+    /// d'Epicube Hub (visible de tous si elle est publique, par son code sinon) et l'on y entre.
+    fn host_party(&mut self) {
+        let Some(mode) = self.modes.get(self.host.pick).cloned() else { return };
+        let who = self.account.as_ref().map_or(self.settings.name.clone(), |a| a.name.clone());
+        let name = match self.host.name.trim() {
+            "" => format!("Partie de {who}"),
+            n => n.to_string(),
+        };
+        let world = match self.host.world.trim() {
+            "" => "monde".to_string(),
+            w => w.to_string(),
+        };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        // Mondes de parties sans lendemain restes d'une session interrompue : on fait place nette.
+        let _ = std::fs::remove_dir_all(PathBuf::from("saves").join(".parties"));
+        let dir = if mode.keep_world { PathBuf::from("saves").join(&world) } else { PathBuf::from("saves").join(".parties").join(format!("{}-{now}", mode.id)) };
+        // Un monde neuf prend une graine au hasard et les regles du mode ; un monde existant garde les siennes.
+        let note = dir.join("graine.txt");
+        if !dir.join("monde.bin").exists() && !note.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&note, shared::seed::random().to_string());
+            let _ = std::fs::write(dir.join("regles.txt"), mode.rules.to_text());
+        }
+        let label = std::fs::read_to_string(&note).ok().map(|t| t.trim().to_string());
+        let seed = label.as_deref().and_then(|t| t.parse::<i64>().ok()).map(shared::seed::fold).unwrap_or(1337);
+        // Le mod du mode de jeu ; en survie et en creatif, les mods installes par le joueur.
+        let packs: Vec<shared::mods::Pack> = match &mode.pack {
+            Some(p) => vec![p.clone()],
+            None => modes::extras(),
+        };
+        let party = server::party::Party {
+            name,
+            mode: mode.id.clone(),
+            mode_name: mode.name.clone(),
+            tags: mode.tags.clone(),
+            max_players: if self.host.places == 0 { mode.players } else { self.host.places },
+            // Une partie privee figure dans Multijoueur avec un cadenas : seuls les amis de l'hote y entrent.
+            private: !self.host.public,
+            host: Some(self.account.as_ref().map_or_else(|| shared::account::offline_id(&shared::account::clean_name(&who)), |a| a.id)),
+            token: self.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone()),
+            host_name: who,
+            hub: server::party::hub(),
+            relay: None,
+        };
+        let started = std::net::TcpListener::bind("0.0.0.0:0").and_then(|l| server::start_party(l, seed, Some(dir.clone()), server::accounts::Accounts::local(), packs, party));
+        match started {
+            Ok(h) => {
+                let addr = format!("127.0.0.1:{}", h.port);
+                self.local = Some(h);
+                self.party = Some((self.host.public, mode.name.clone()));
+                self.party_dir = (!mode.keep_world).then_some(dir);
+                self.browser = None;
+                self.connect(&addr);
+                if let Some(g) = self.game.as_mut() {
+                    g.seed_label = label;
+                }
+            }
+            Err(e) => self.error = Some(format!("Impossible d'héberger la partie : {e}")),
+        }
+    }
+
+    /// Etat de la partie hebergee, pour l'ecran de pause.
+    pub fn party_lines(&self) -> Option<Vec<String>> {
+        use std::sync::atomic::Ordering;
+        let (public, mode) = self.party.as_ref()?;
+        let st = &self.local.as_ref()?.status;
+        let players = st.players.load(Ordering::Relaxed);
+        let mut lines = vec![format!("{mode} - {players} joueur{}", if players > 1 { "s" } else { "" })];
+        lines.push(match (st.error(), st.listed.load(Ordering::Relaxed)) {
+            (Some(e), _) => format!("Pas encore en ligne : {e}. Nouvel essai..."),
+            (None, false) => "Mise en ligne...".to_string(),
+            (None, true) if st.relayed.load(Ordering::Relaxed) || st.reachable.load(Ordering::Relaxed) => {
+                if *public { "Partie publique : tout le monde peut la rejoindre.".to_string() } else { "Partie privée : seuls vos amis peuvent la rejoindre.".to_string() }
+            }
+            (None, true) => "Mise en relation avec le relais...".to_string(),
+        });
+        Some(lines)
     }
 
     fn leave(&mut self, gfx: &mut Gfx) {
@@ -2284,11 +2431,33 @@ impl Shell {
         match action {
             Action::None => {}
             Action::Solo => self.start_solo(),
-            Action::Join => {
-                let a = self.settings.address.clone();
-                let addr = if a.contains(':') { a } else { format!("{a}:{}", shared::DEFAULT_PORT) };
+            Action::Host => self.host_party(),
+            Action::JoinAt(addr) => {
                 shared::mods::clear_content();
+                self.browser = None;
                 self.connect(&addr);
+            }
+            Action::Play(mode) => {
+                // Comme dans les jeux a salons : on rejoint une partie de ce mode s'il y en a une avec de la
+                // place ; sinon on en heberge une, publique, et l'on attend les autres.
+                let found = self.browser.as_ref().and_then(|b| b.best(&mode));
+                match (found, self.modes.iter().position(|m| m.id == mode)) {
+                    (Some(s), _) => {
+                        shared::mods::clear_content();
+                        self.browser = None;
+                        self.connect(&s.address);
+                    }
+                    (None, Some(pick)) => {
+                        (self.host.pick, self.host.public, self.host.places) = (pick, true, 0);
+                        self.host.name.clear();
+                        self.host_party();
+                    }
+                    (None, None) => {
+                        if let Some(b) = self.browser.as_mut() {
+                            b.note = Some("Aucune partie de ce mode n'a de place, et ce mode n'est pas installé chez vous.".into());
+                        }
+                    }
+                }
             }
             Action::Quit => self.quit = true,
             Action::Leave => self.leave(gfx),
@@ -2342,18 +2511,29 @@ impl Shell {
             self.applied = self.settings.clone();
         }
 
+        // Les touches apprennent la lettre qu'elles portent sur ce clavier.
+        for (code, label) in &inp.typed {
+            self.settings.controls.learn(*code, label);
+        }
         let active = self.screen == Screen::Game;
-        if !active && inp.pressed.contains(&KeyCode::Escape) {
+        if !active && inp.pressed.contains(&KeyCode::Escape) && self.rebinding.is_some() {
+            // Echap annule le choix d'une touche, sans quitter la page.
+            self.rebinding = None;
+        } else if !active && inp.pressed.contains(&KeyCode::Escape) {
             self.screen = match self.screen {
                 Screen::Pause => Screen::Game,
                 Screen::PauseSettings => Screen::Pause,
                 Screen::Settings | Screen::Multi | Screen::Solo => Screen::Title,
+                Screen::Host => Screen::Multi,
                 s => s,
             };
+            if self.screen == Screen::Title {
+                self.browser = None;
+            }
             self.library = None;
             self.field = 0;
         }
-        if inp.pressed.contains(&KeyCode::Tab) && matches!(self.screen, Screen::Multi | Screen::Solo) {
+        if inp.pressed.contains(&KeyCode::Tab) && matches!(self.screen, Screen::Multi | Screen::Solo | Screen::Host) {
             self.field = if self.field == 1 { 2 } else { 1 };
         }
 
@@ -2361,7 +2541,11 @@ impl Shell {
         if let Some(reason) = self.game.as_ref().filter(|g| !g.joined).and_then(|g| g.lost.clone()) {
             let local = self.is_local();
             self.leave(gfx);
-            self.screen = if local { Screen::Title } else { Screen::Multi };
+            if local {
+                self.screen = Screen::Title;
+            } else {
+                self.open_multi();
+            }
             self.error = Some(reason);
         }
         let (w, h) = gfx.size();
@@ -2698,6 +2882,8 @@ fn main() {
         drag: None,
         sound_page: false,
         perf_page: false,
+        keys_page: false,
+        rebinding: None,
         mic: None,
         mic_error: None,
         mic_echo: false,
@@ -2713,21 +2899,57 @@ fn main() {
         quit: false,
         showcase: false,
         library: None,
+        browser: None,
+        modes: Vec::new(),
+        host: HostForm { pick: 0, name: String::new(), public: true, places: 0, world: "monde".to_string() },
+        party: None,
+        party_dir: None,
     };
 
     if gfx.software {
         shell.error = Some("Aucun pilote de carte graphique trouve : le jeu tourne en rendu logiciel, tres lent. Installez le pilote de votre carte graphique.".to_string());
     }
 
+    // Les amis du joueur le voient « en jeu » tant que le jeu tourne.
+    browser::start_presence(shell.account.as_ref().filter(|a| !a.expired).map(|a| a.token.clone()));
     // Demarrage direct, sans passer par le menu.
     let demo = std::env::var("EPICUBE_DEMO").ok();
     if let Some(a) = arg("--connect") {
         let addr = if a.contains(':') { a } else { format!("{a}:{}", shared::DEFAULT_PORT) };
         shell.connect(&addr);
-    } else if flag("--solo") || demo.as_deref().is_some_and(|d| d != "parametres") {
+    } else if let Some(mode) = arg("--heberger") {
+        // Heberge directement une partie de ce mode : « --heberger uhc », avec « --prive » pour une partie privee.
+        shell.modes = modes::available();
+        match shell.modes.iter().position(|m| m.id == mode) {
+            Some(pick) => {
+                (shell.host.pick, shell.host.public) = (pick, !flag("--prive"));
+                if let Some(world) = arg("--world") {
+                    shell.host.world = world;
+                }
+                shell.host_party();
+            }
+            None => eprintln!("Mode de jeu inconnu : {mode}"),
+        }
+    } else if flag("--solo") || demo.as_deref().is_some_and(|d| !matches!(d, "parametres" | "controles" | "multijoueur" | "amis" | "heberger" | "pause-partie")) {
         shell.start_solo();
     }
     match demo.as_deref() {
+        Some("multijoueur") => shell.open_multi(),
+        Some("amis") => {
+            shell.open_multi();
+            if let Some(b) = shell.browser.as_mut() {
+                b.toggle_friends();
+            }
+        }
+        Some("heberger") => {
+            shell.open_multi();
+            shell.screen = Screen::Host;
+        }
+        Some("pause-partie") => shell.screen = Screen::Pause,
+        Some("controles") => {
+            shell.screen = Screen::Settings;
+            shell.keys_page = true;
+        }
         Some("pause") => shell.screen = Screen::Pause,
         Some("parametres") => shell.screen = Screen::Settings,
         Some(_) => shell.showcase = true,
@@ -2802,6 +3024,12 @@ fn main() {
                             if key.state == ElementState::Pressed {
                                 if !key.repeat {
                                     input.pressed.push(code);
+                                    // La lettre que porte cette touche sur ce clavier.
+                                    if let Key::Character(ch) = &key.logical_key {
+                                        if ch.chars().count() == 1 {
+                                            input.typed.push((code, ch.to_uppercase()));
+                                        }
+                                    }
                                 }
                                 input.keys.insert(code);
                             } else {
@@ -2854,6 +3082,7 @@ fn main() {
                         }
                         input.pressed.clear();
                         input.text.clear();
+                        input.typed.clear();
                         input.backspace = 0;
                         input.dx = 0.0;
                         input.dy = 0.0;

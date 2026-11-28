@@ -248,7 +248,9 @@ impl Mods {
     pub fn announced(infos: Vec<Info>, content: sm::Content, tiles: Vec<TileDef>) -> (Mods, Vec<ClientMsg>) {
         sm::set_content(content);
         // Deja la : installe par le joueur, ou recu d'un serveur une autre fois.
-        let (installed, _) = sm::load_dir(Path::new(sm::DIR));
+        let (mut installed, _) = sm::load_dir(Path::new(sm::DIR));
+        // Les modes de jeu livres avec le jeu sont deja la, eux aussi.
+        installed.extend(sm::load_dir(Path::new(crate::modes::DIR)).0);
         let mut m = Mods { infos, tiles, packs: Vec::new(), queue: VecDeque::new(), current: None, running: Vec::new(), ready: false, paint: None, models: Default::default() };
         for info in m.infos.clone() {
             let cached = || std::fs::read(Path::new(sm::CACHE).join(format!("{}.zip", sm::hex(&info.hash)))).ok().filter(|b| sm::hash_of(b) == info.hash).and_then(|b| Pack::from_zip(b).ok());

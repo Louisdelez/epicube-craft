@@ -90,7 +90,8 @@ Un exemple complet : [`exemples/mods/bienvenue`](../exemples/mods/bienvenue).
 | `place` | le joueur, x, y, z, le bloc | le bloc n'est pas posé |
 | `interact` | le joueur, x, y, z, le bloc (clic droit sur un bloc) | le jeu n'en fait rien |
 | `use` | le joueur, l'objet tenu (clic droit) | le jeu n'en fait rien |
-| `death`, `respawn` | le joueur | |
+| `death` | le joueur, le pseudo de celui qui l'a tué (ou vide) | |
+| `respawn` | le joueur | |
 | `mob_death` | la créature, x, y, z | |
 | `message` | le joueur, un nom, un texte | (message du script d'écran) |
 | `tick` | rien, 20 fois par seconde | |
@@ -105,6 +106,8 @@ Un exemple complet : [`exemples/mods/bienvenue`](../exemples/mods/bienvenue).
 | `worldgen.ore{...}` | sème un minerai dans la roche du monde |
 | `mobs.register{...}` | ajoute une créature ; renvoie son nom complet, `mod:creature` |
 | `say(texte)` | écrit dans le chat de tous |
+| `announce(texte)` | affiche un message au centre de l'écran de tous |
+| `rules.set(règle, oui)` | règle de la partie : `"pvp"` (combat entre joueurs), `"regen"` (la vie remonte seule), `"mobs"` (les créatures naissent d'elles-mêmes) |
 | `players()` | les joueurs connectés |
 | `world.get(x, y, z)`, `world.set(x, y, z, bloc)` | lit et pose un bloc |
 | `world.time()`, `world.set_time(heure)` | heure du jour, de 0 à 24 |
@@ -112,10 +115,14 @@ Un exemple complet : [`exemples/mods/bienvenue`](../exemples/mods/bienvenue).
 | `world.drop(objet, nombre, x, y, z)` | laisse tomber des objets |
 | `world.explode(x, y, z, puissance)` | explosion |
 | `world.sound(son, x, y, z, volume)` | bruitage entendu autour d'un endroit |
+| `world.top(x, z)` | hauteur du bloc le plus haut de la colonne |
+| `world.fill(x1, y1, z1, x2, y2, z2, bloc)` | remplit un pavé (200 000 blocs au plus) |
 | `store.get(clé)`, `store.set(clé, valeur)` | mémoire du mod, enregistrée avec le monde |
 | `print(...)` | écrit dans le journal du serveur |
 
-Un joueur : `player.name`, `player.id`, `player:tell(texte)`, `player:give(objet, nombre)`, `player:pos()`, `player:teleport(x, y, z)`, `player:health()`, `player:set_health(vie)`, `player:mode()`, `player:kick(raison)`, `player:send(nom, texte)` (vers le script d'écran), `player:online()`, `player:count(objet)`, `player:take(objet, nombre)`, `player:held()`, `player:set_mode(mode)`, `player:hunger()`, `player:set_hunger(faim)`, `player:dimension()`, `player:sound(son, volume)`.
+Un joueur : `player.name`, `player.id`, `player:tell(texte)`, `player:give(objet, nombre)`, `player:pos()`, `player:teleport(x, y, z)`, `player:health()`, `player:set_health(vie)`, `player:mode()`, `player:kick(raison)`, `player:send(nom, texte)` (vers le script d'écran), `player:online()`, `player:count(objet)`, `player:take(objet, nombre)`, `player:held()`, `player:set_mode(mode)`, `player:hunger()`, `player:set_hunger(faim)`, `player:dimension()`, `player:sound(son, volume)`, `player:damage(points)`, `player:set_home(x, y, z)` (où il revient après sa mort), `player:clear()` (vide son inventaire), `player:info(texte)` (message au centre de son écran).
+
+Le monde se charge de lui-même là où un script lit ou écrit : un mod peut bâtir une arène loin de tout joueur.
 
 Un bloc ou un objet se désigne par son mot dans la commande `/donner` (`pierre`, `planches`, `diamant`, `baton`...), ou par `mod:nom` pour ce qu'un mod ajoute (le nom seul suffit à l'intérieur du même mod). `air` retire un bloc. Un son se désigne par son nom dans le dossier `audio/sfx` du jeu, ou par `mod:fichier` pour un son du dossier `sons` d'un mod.
 
@@ -242,6 +249,36 @@ Le fichier `.wasm` obtenu se range dans le dossier du mod sous le nom `serveur.w
 Les fonctions sont celles du Lua, sous forme Rust : `on_join`, `on_break`, `on_use`, `on_mob_death`..., `command`, `blocks::register(Block::new(...))`, `items::register(Item::new(...))`, `recipes::shaped`, `recipes::smelt`, `worldgen::ore(Ore::new(...))`, `mobs::register(Mob::new(...))`, `world::*`, `store::*`, et les méthodes de `Player`. Côté client : `on_hud`, `on_key`, `on_click`, `on_message`, `send`, `sound`, `screen::open`, `draw::text`, `draw::rect`, `draw::image`, `draw::icon`. La documentation du kit (`cargo doc -p epicube-mod --open`) les décrit toutes.
 
 Un gros exemple, qui utilise tout : [`exemples/mods/rubis`](../exemples/mods/rubis) — minerai semé dans le monde, gemme, pioche, lame, tarte, recettes, cuisson, fleur, golem, compteur à l'écran, boutique en jeu (touche `G`) avec images, icônes et son. `sh construire.sh` le compile.
+
+## Modes de jeu
+
+Un mode de jeu (UHC, Bed Wars...) est un mod dont le `mod.json` porte une rubrique `mode`. Il apparaît alors à l'écran **Héberger une partie**, et les parties de ce mode forment une catégorie de l'écran **Multijoueur**.
+
+```json
+{
+  "id": "uhc", "name": "UHC", "version": "1.0.0",
+  "mode": {
+    "name": "UHC",
+    "about": "La vie ne remonte pas toute seule, la zone rétrécit, le dernier en vie gagne.",
+    "tags": ["pvp", "survie"],
+    "players": 16,
+    "game": "aventure",
+    "keep_world": false
+  }
+}
+```
+
+| Champ | Rôle |
+|---|---|
+| `name`, `about` | nom et phrase de présentation |
+| `tags` | étiquettes des parties de ce mode dans la liste |
+| `players` | nombre de places proposé |
+| `game` | mode donné aux joueurs qui arrivent : `survie`, `creatif`, `aventure` ou `spectateur` |
+| `keep_world` | `true` : le monde est gardé d'une partie à l'autre ; sinon chaque partie commence dans un monde neuf |
+
+Le script du mode fait le reste avec les fonctions de cette page : attendre les joueurs, lancer la partie, fixer les règles (`rules.set`), bâtir une arène (`world.fill`), compter les survivants. Les deux modes livrés avec le jeu servent d'exemples : [`modes/uhc`](../modes/uhc) et [`modes/bedwars`](../modes/bedwars), chacun en un seul fichier Lua.
+
+Un mode de jeu installé depuis la bibliothèque (dossier `mods`) s'héberge comme ceux du jeu.
 
 ## Publier un mod dans la bibliothèque
 

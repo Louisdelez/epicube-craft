@@ -58,6 +58,31 @@ pub struct Manifest {
     pub description: String,
     #[serde(default, alias = "auteur")]
     pub author: String,
+    /// Le mod est un mode de jeu : il se choisit a l'ecran « Heberger une partie ».
+    #[serde(default)]
+    pub mode: Option<ModeDef>,
+}
+
+/// Un mode de jeu apporte par un mod (UHC, Bed Wars...).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeDef {
+    #[serde(alias = "nom")]
+    pub name: String,
+    /// Ce qu'on y fait, en une phrase.
+    #[serde(default, alias = "description")]
+    pub about: String,
+    /// Etiquettes sous lesquelles les parties de ce mode se trouvent dans l'annuaire.
+    #[serde(default, alias = "etiquettes")]
+    pub tags: Vec<String>,
+    /// Places par defaut.
+    #[serde(default, alias = "joueurs")]
+    pub players: u16,
+    /// Le monde est garde d'une partie a l'autre (un monde de survie) ; sinon chaque partie en cree un neuf.
+    #[serde(default, alias = "monde_garde")]
+    pub keep_world: bool,
+    /// Mode de jeu donne aux joueurs : « survie », « creatif », « aventure » ou « spectateur ».
+    #[serde(default, alias = "jeu")]
+    pub game: String,
 }
 
 /// Un identifiant de mod : minuscules, chiffres, tirets, de 2 a 32 caracteres.

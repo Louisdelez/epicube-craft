@@ -24,7 +24,7 @@ serde_json = "1"
 base64 = "0.22"
 rodio = { version = "0.19", default-features = false, features = ["vorbis", "wav", "mp3", "flac"] }
 cpal = "0.15"
-ureq = "2"
+ureq = { version = "2", features = ["json"] }
 
 # macOS : reglage de la couche d'affichage (agrandissement net, sans lissage).
 [target.'cfg(target_os = "macos")'.dependencies]

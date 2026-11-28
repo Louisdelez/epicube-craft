@@ -5,6 +5,7 @@ mod combat;
 mod farm;
 mod mobs;
 mod mods;
+pub mod party;
 mod rails;
 mod realms;
 mod signal;
@@ -180,6 +181,8 @@ struct Client {
     pending: Option<Pending>,
     /// Joueur identifie qui telecharge les mods du serveur avant d'entrer : compte, verifie, pseudo, vue.
     waiting: Option<(shared::account::Id, bool, String, u8)>,
+    /// Dernier joueur a l'avoir frappe, et quand : c'est a lui que revient sa mort.
+    hit_by: Option<(u32, Instant)>,
     /// Messages de mods recus pendant la seconde en cours, et debut de cette seconde.
     mod_n: u32,
     mod_t: Instant,
@@ -320,6 +323,17 @@ struct Server {
     mods: Option<mods::Host>,
     /// Joueurs qu'un script vient d'exclure : ils sortent une fois le script revenu.
     mod_kicks: Vec<(u32, String)>,
+    /// Regles que les modes de jeu peuvent changer : combat entre joueurs, vie qui remonte toute
+    /// seule, naissance naturelle des creatures.
+    pvp: bool,
+    regen: bool,
+    spawning: bool,
+    /// Partie privee : seuls y entrent celui qui l'heberge et ses amis.
+    private: bool,
+    host_account: Option<shared::account::Id>,
+    /// Places de la partie (0 : sans limite), et son etat partage avec le fil de l'annuaire.
+    max_players: u16,
+    status: std::sync::Arc<party::Status>,
     /// Creatures mortes pendant ce tick, a annoncer aux mods : (dimension, genre, position).
     mod_deaths: Vec<(u8, u8, u8, Vec3)>,
 }
@@ -400,7 +414,17 @@ impl Server {
             mods,
             mod_kicks: Vec::new(),
             mod_deaths: Vec::new(),
+            pvp: true,
+            regen: true,
+            spawning: true,
+            private: false,
+            host_account: None,
+            max_players: 0,
+            status: Default::default(),
         };
+        for (rule, on) in srv.mods.as_ref().map(|h| h.initial_rules()).unwrap_or_default() {
+            srv.set_rule(&rule, on);
+        }
         srv.spawn = srv.find_spawn();
         for dim in 0..3 {
             srv.enter(dim);
@@ -494,6 +518,7 @@ impl Client {
                         verified: false,
                         pending: None,
             waiting: None,
+            hit_by: None,
             mod_n: 0,
             mod_t: Instant::now(),
                         pos: spawn,
@@ -552,10 +577,15 @@ pub struct ServerHandle {
     tx: Sender<Event>,
     join: Option<JoinHandle<()>>,
     pub port: u16,
+    /// Nombre de joueurs et inscription a l'annuaire, pour l'afficher a celui qui heberge.
+    pub status: std::sync::Arc<party::Status>,
+    announcer: Option<party::Announcer>,
 }
 
 impl ServerHandle {
     pub fn stop(&mut self) {
+        // La partie quitte l'annuaire avant de s'arreter.
+        self.announcer = None;
         let _ = self.tx.send(Event::Shutdown);
         if let Some(j) = self.join.take() {
             let _ = j.join();
@@ -566,6 +596,7 @@ impl ServerHandle {
         if let Some(j) = self.join.take() {
             let _ = j.join();
         }
+        self.announcer = None;
     }
     /// Fonction a appeler depuis un autre fil (Ctrl+C) pour demander l'arret.
     pub fn stopper(&self) -> impl Fn() + Send + 'static {
@@ -590,37 +621,57 @@ pub fn spawn_local(seed: u32, dir: Option<PathBuf>, lan: bool, mods: Vec<shared:
 
 /// Demarre le serveur sur `listener`. `dir` = dossier de sauvegarde, `accounts` = regles d'entree.
 pub fn start(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts) -> std::io::Result<ServerHandle> {
-    launch(listener, seed, dir, accounts, None)
+    launch(listener, seed, dir, accounts, None, None)
+}
+
+/// Demarre une partie ouverte aux autres : elle s'inscrit a l'annuaire d'Epicube Hub (si `party.hub`
+/// est renseigne), tient son nombre de joueurs a jour et refuse l'entree quand elle est complete.
+pub fn start_party(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Vec<shared::mods::Pack>, party: party::Party) -> std::io::Result<ServerHandle> {
+    launch(listener, seed, dir, accounts, Some(mods), Some(party))
 }
 
 /// Comme `start`, avec les mods de la partie : les joueurs qui ne les ont pas les recoivent a la connexion.
 pub fn start_with_mods(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Vec<shared::mods::Pack>) -> std::io::Result<ServerHandle> {
-    launch(listener, seed, dir, accounts, Some(mods))
+    launch(listener, seed, dir, accounts, Some(mods), None)
 }
 
-fn launch(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Option<Vec<shared::mods::Pack>>) -> std::io::Result<ServerHandle> {
+fn launch(listener: TcpListener, seed: u32, dir: Option<PathBuf>, accounts: accounts::Accounts, mods: Option<Vec<shared::mods::Pack>>, party: Option<party::Party>) -> std::io::Result<ServerHandle> {
     let port = listener.local_addr()?.port();
     let (ev_tx, ev_rx) = mpsc::channel::<Event>();
-    let accept_tx = ev_tx.clone();
-    thread::spawn(move || accept_loop(listener, accept_tx));
+    let door = Door { tx: ev_tx.clone(), next_id: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1)) };
+    let accept = door.clone();
+    thread::spawn(move || accept_loop(listener, accept));
+    let status = std::sync::Arc::new(party::Status::default());
+    let (shared_status, max_players, mod_count) = (status.clone(), party.as_ref().map_or(0, |p| p.max_players), mods.as_ref().map_or(0, |m| m.len()) as u16);
+    let (private, host_account) = (party.as_ref().is_some_and(|p| p.private), party.as_ref().and_then(|p| p.host));
     let join = thread::Builder::new().name("serveur".into()).spawn(move || {
-        Server::build(seed, dir, accounts, mods).run(ev_rx);
+        let mut srv = Server::build(seed, dir, accounts, mods);
+        (srv.max_players, srv.status) = (max_players, shared_status);
+        (srv.private, srv.host_account) = (private, host_account);
+        srv.run(ev_rx);
     })?;
-    Ok(ServerHandle { tx: ev_tx, join: Some(join), port })
+    let announcer = party.filter(|p| !p.hub.is_empty()).map(|p| party::announce(p, port, mod_count, status.clone(), door));
+    Ok(ServerHandle { tx: ev_tx, join: Some(join), port, status, announcer })
 }
 
-fn accept_loop(listener: TcpListener, ev_tx: Sender<Event>) {
-    let mut next_id = 1u32;
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+/// Par ou les connexions des joueurs entrent dans le serveur : celles qu'il recoit lui-meme, et
+/// celles qu'il va chercher au relais quand la partie est hebergee derriere une box.
+#[derive(Clone)]
+pub struct Door {
+    tx: Sender<Event>,
+    next_id: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Door {
+    /// Confie au serveur la connexion d'un joueur. Faux si le serveur est arrete.
+    pub fn admit(&self, stream: TcpStream) -> bool {
         let _ = stream.set_nodelay(true);
-        let id = next_id;
-        next_id += 1;
-        let Ok(writer) = stream.try_clone() else { continue };
-        if ev_tx.send(Event::Join(id, writer)).is_err() {
-            return;
+        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Ok(writer) = stream.try_clone() else { return true };
+        if self.tx.send(Event::Join(id, writer)).is_err() {
+            return false;
         }
-        let tx = ev_tx.clone();
+        let tx = self.tx.clone();
         thread::spawn(move || {
             let mut reader = BufReader::new(stream);
             loop {
@@ -637,6 +688,16 @@ fn accept_loop(listener: TcpListener, ev_tx: Sender<Event>) {
                 }
             }
         });
+        true
+    }
+}
+
+fn accept_loop(listener: TcpListener, door: Door) {
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        if !door.admit(stream) {
+            return;
+        }
     }
 }
 
@@ -796,6 +857,46 @@ impl Server {
                 self.announce(&format!("{} a quitté la partie", c.name), shared::proto::chat::INFO);
             }
         }
+        self.count_players();
+    }
+
+    /// Un joueur en frappe un autre : memes regles que contre une creature (force du coup, allonge, usure).
+    fn hit_player(&mut self, id: u32, target: u32) {
+        let now = Instant::now();
+        let Some(victim) = self.clients.get(&target).filter(|v| v.ready && !v.dead).map(|v| (Vec3::from(v.pos), v.dim, v.mode)) else { return };
+        let Some(c) = self.clients.get_mut(&id) else { return };
+        let elapsed = now.duration_since(c.last_hit).as_secs_f64();
+        if !self.pvp || id == target || c.dead || c.blocking || elapsed < 0.1 || c.dim != victim.1 || shared::rules::invulnerable(victim.2) {
+            return;
+        }
+        let w = items::weapon(c.held());
+        if c.eye().distance(victim.0 + Vec3::Y * 0.9) > 5.5 + w.reach {
+            return;
+        }
+        let power = items::charge(elapsed, w.speed);
+        let falling = !c.on_ground && !c.fly && c.fall_peak - c.pos[1] > 0.05;
+        let dmg = w.dmg * power * if falling && power > 0.85 { 1.5 } else { 1.0 };
+        c.last_hit = now;
+        c.exhaustion += 0.1;
+        if let Some(st) = c.inv[c.sel].as_mut().filter(|_| w.wear > 0) {
+            st.dur = st.dur.saturating_sub(w.wear);
+            if st.dur == 0 {
+                c.inv[c.sel] = None;
+            }
+            c.inv_dirty = true;
+        }
+        let from = Vec3::from(c.pos);
+        let away = Vec3::new(victim.0.x - from.x, 0.0, victim.0.z - from.z).normalize_or_zero();
+        if let Some(v) = self.clients.get_mut(&target) {
+            v.hit_by = Some((id, now));
+        }
+        self.hurt_player(target, dmg, (away * 7.0 + Vec3::Y * 4.5) * w.knock);
+    }
+
+    /// Tient a jour le nombre de joueurs que la partie annonce.
+    fn count_players(&self) {
+        let n = self.clients.values().filter(|c| c.ready).count() as u32;
+        self.status.players.store(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Met un joueur dehors en lui disant pourquoi.
@@ -819,6 +920,7 @@ impl Server {
             ClientMsg::Dig { .. }
                 | ClientMsg::Use { .. }
                 | ClientMsg::Attack { .. }
+                | ClientMsg::Hit { .. }
                 | ClientMsg::Interact { .. }
                 | ClientMsg::Click { .. }
                 | ClientMsg::Craft { .. }
@@ -905,6 +1007,7 @@ impl Server {
             ClientMsg::Craft { recipe } => self.craft_recipe(id, recipe as usize),
             ClientMsg::DropItem { all } => self.drop_selected(id, all),
             ClientMsg::Attack { id: mob } => self.attack(id, mob),
+            ClientMsg::Hit { id: target } => self.hit_player(id, target),
             ClientMsg::Interact { id: mob } => self.interact(id, mob),
             ClientMsg::Respawn => {
                 let was_dead = self.clients.get(&id).is_some_and(|c| c.dead);
@@ -973,6 +1076,16 @@ impl Server {
 
     /// Un joueur identifie : il recoit d'abord les mods du serveur, s'il y en a, puis il entre.
     fn enroll(&mut self, id: u32, account: shared::account::Id, verified: bool, name: String, view: u8) {
+        if self.max_players > 0 && self.clients.values().filter(|c| c.ready || c.waiting.is_some()).count() >= self.max_players as usize {
+            return self.refuse(id, "la partie est complète".into());
+        }
+        // Partie privee : celui qui l'heberge, et ses amis connectes a leur compte.
+        if self.private && self.host_account != Some(account) {
+            let friend = verified && self.status.friends.lock().is_ok_and(|f| f.contains(&account));
+            if !friend {
+                return self.refuse(id, "cette partie est privée : elle est réservée aux amis de celui qui l'héberge".into());
+            }
+        }
         if self.offer_mods(id) {
             if let Some(c) = self.clients.get_mut(&id) {
                 c.waiting = Some((account, verified, name, view));
@@ -1109,6 +1222,7 @@ impl Server {
         self.broadcast_all(ServerMsg::Roster { name: name.clone(), here: true }, None);
         self.announce(&format!("{name} a rejoint la partie"), shared::proto::chat::INFO);
         self.broadcast_all(ServerMsg::PlayerJoin { id, name, account }, Some(id));
+        self.count_players();
         self.mod_event("join", Some(id), &[]);
         // Aide au developpement : EPICUBE_DEMO=abime ou zenith envoie le joueur dans la dimension.
         match std::env::var("EPICUBE_DEMO").as_deref() {
@@ -2070,7 +2184,8 @@ impl Server {
     // ---------------------------------------------------------------- survie
 
     fn tick_survival(&mut self) {
-        let dim = self.dim;
+        let (dim, regen) = (self.dim, self.regen);
+        let dim = dim;
         let (difficulty, second) = (self.rules.difficulty, self.tick % TPS as u64 == 0);
         let mut dead = Vec::new();
         for (id, c) in self.clients.iter_mut() {
@@ -2124,7 +2239,8 @@ impl Server {
                         c.stats_dirty = true;
                     }
                 }
-                c.regen_t += DT;
+                // Une partie peut couper la vie qui remonte toute seule (UHC) : le compteur n'avance plus.
+                c.regen_t += if regen { DT } else { 0.0 };
                 if c.hunger >= 20.0 && c.saturation > 0.0 && c.hp < 20.0 {
                     // Bien nourri : la vie remonte vite, en puisant dans la saturation.
                     if c.regen_t >= 0.5 {
@@ -2209,7 +2325,16 @@ impl Server {
             self.spawn_drop(pos, vel, st, 1.5);
         }
         self.announce(&format!("{name} est mort"), shared::proto::chat::INFO);
-        self.mod_event("death", Some(id), &[]);
+        // La mort revient au dernier joueur qui l'a frappe, s'il l'a fait dans les dix dernieres secondes.
+        let killer = self
+            .clients
+            .get(&id)
+            .and_then(|c| c.hit_by)
+            .filter(|(_, at)| at.elapsed().as_secs_f64() < 10.0)
+            .and_then(|(k, _)| self.clients.get(&k))
+            .map(|k| k.name.clone())
+            .unwrap_or_default();
+        self.mod_event("death", Some(id), &[mods::Arg::S(killer)]);
     }
 
     fn respawn(&mut self, id: u32) {

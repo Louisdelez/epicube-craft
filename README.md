@@ -17,7 +17,7 @@ Le jeu tourne sur **macOS, Linux et Windows**, en solo ou à plusieurs, avec un 
 - **Ferme et cuisine** : riz, soja, thé, daikon, kabocha, élevage, pêche, et une vingtaine de plats, de l'onigiri au bento.
 - **Circuits de reiseki** : fils, relais, comparateurs, pistons, observateurs, distributeurs, entonnoirs, rails et chariots.
 - **Modes de jeu** : survie, créatif, aventure, spectateur, extrême ; quatre difficultés.
-- **Multijoueur** : chat, commandes avec suggestions, chat vocal de proximité.
+- **Multijoueur** : toutes les parties en ligne dans une seule liste, hébergement depuis le jeu sans rien régler, parties publiques ou réservées aux amis, modes de jeu tout faits (UHC, Bed Wars), chat, commandes, chat vocal de proximité.
 - **Ressources modifiables** : textures en PNG, modèles au format Blockbench, sons remplaçables.
 
 ![Inventaire créatif](docs/images/inventaire-creatif.png)
@@ -50,7 +50,7 @@ Pour produire un dossier prêt à distribuer : `sh scripts/empaqueter.sh` (macOS
 |---|---|
 | [Guide du joueur](docs/jouer.md) | commandes, modes de jeu, difficultés, chat et commandes, chat vocal, réglages |
 | [Le monde](docs/monde.md) | biomes, mondes, structures, créatures, objets, armures, ferme, circuits |
-| [Multijoueur et serveur](docs/serveur.md) | partie en réseau local, serveur dédié, sauvegardes, règles d'un monde |
+| [Multijoueur et serveur](docs/serveur.md) | rejoindre et héberger une partie, amis, modes de jeu, serveur dédié, sauvegardes |
 | [Comptes des joueurs](docs/comptes.md) | jeton signé, branchement du launcher et du service de comptes, réglage d'un serveur |
 | [Mods](docs/mods.md) | installer des mods, en écrire en Lua ou en Rust, les publier |
 | [Modifier les ressources](docs/ressources.md) | textures, modèles Blockbench, sons |

@@ -382,7 +382,7 @@ impl App {
         let light = self.light_at(self.pos + glam::Vec3::Y * 0.5);
         let world = ["Surface", "Yomi, le pays des morts", "Takamagahara, la plaine céleste"][self.dim.min(2) as usize];
         let mut left = vec![
-            format!("Epicube Craft 0.11 - {:.0} images/s ({:.1} ms, pire {:.1} ms)", self.fps, last, worst),
+            format!("Epicube Craft 0.12 - {:.0} images/s ({:.1} ms, pire {:.1} ms)", self.fps, last, worst),
             format!("Rendu : {backend} - {:.0} x {:.0}", w, h),
             format!("Chunks : {meshes} affichés, {} chargés - vue {}", self.world.chunks.len(), self.view),
             format!(

@@ -23,6 +23,8 @@ rm -rf "$out"
 mkdir -p "$out"
 cp target/release/epicube-craft target/release/epicube-craft-server "$out/"
 cp -R audio "$out/audio"
+# Les modes de jeu livres avec le jeu (UHC, Bed Wars...).
+cp -R modes "$out/modes"
 cat > "$out/LISEZ-MOI.txt" <<LISEZ
 Epicube Craft
 
@@ -32,7 +34,7 @@ Lancer le jeu : double-cliquer sur epicube-craft, ou dans un terminal :
 Serveur dedie (facultatif) :
     ./epicube-craft-server --port 25600 --world monde
 
-Le dossier audio doit rester a cote de l'executable. Les mondes sont enregistres
+Les dossiers audio et modes doivent rester a cote de l'executable. Les mondes sont enregistres
 dans le dossier saves, les reglages dans epicube-craft.cfg.
 
 Linux : il faut une carte graphique compatible Vulkan et la bibliotheque son ALSA

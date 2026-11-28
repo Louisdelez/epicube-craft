@@ -5,7 +5,7 @@
 À l'écran titre :
 
 - **Jouer en solo** : choisissez un nom de monde et, si vous le souhaitez, une graine (des chiffres ou un texte). La même graine redonne le même monde. Un monde déjà créé garde sa graine et ses règles.
-- **Multijoueur** : saisissez l'adresse d'un serveur et votre pseudo.
+- **Multijoueur** : toutes les parties en ligne, la recherche, les amis, et le bouton pour héberger la vôtre (voir [Multijoueur et serveur](serveur.md)).
 - **Paramètres** : affichage, son, micro, performances.
 
 À la création d'un monde, vous réglez aussi le [mode de jeu](#modes-de-jeu), la [difficulté](#difficultés) et la **triche** (le droit de changer de mode et d'utiliser les commandes qui modifient la partie).
@@ -13,6 +13,8 @@
 ## Commandes
 
 Les touches sont données pour un clavier AZERTY ; elles occupent la même place sur un clavier QWERTY (`WASD`, `Q` pour jeter).
+
+Toutes ces touches se changent dans **Paramètres → Contrôles** : on clique sur la touche d'une action, puis on appuie sur la nouvelle. Une touche donnée à deux actions s'affiche en rouge ; **Réinitialiser** remet les touches d'origine.
 
 | Action | Touche |
 |---|---|
