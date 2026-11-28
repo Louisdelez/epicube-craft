@@ -1,0 +1,62 @@
+Epicube Craft (macos x86_64)
+Fil : main
+panicked at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/io/stdio.rs:1166:9:
+failed printing to stdout: Broken pipe (os error 32)
+
+Pile d'appels :
+   0: std::backtrace_rs::backtrace::libunwind::trace
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1: std::backtrace_rs::backtrace::trace_unsynchronized::<<std::backtrace::Backtrace>::create::{closure#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2: <std::backtrace::Backtrace>::create
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/backtrace.rs:331:13
+   3: <std::backtrace::Backtrace>::force_capture
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/backtrace.rs:312:9
+   4: epicube_craft::report_crashes::{closure#0}
+             at ./client/src/main.rs:2485:13
+   5: <alloc::boxed::Box<dyn for<'a, 'b> core::ops::function::Fn<(&'a std::panic::PanicHookInfo<'b>,), Output = ()> + core::marker::Send + core::marker::Sync> as core::ops::function::Fn<(&std::panic::PanicHookInfo,)>>::call
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/boxed.rs:2333:9
+   6: std::panicking::panic_with_hook
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:823:13
+   7: std::panicking::panic_handler::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:688:13
+   8: std::sys::backtrace::__rust_end_short_backtrace::<std::panicking::panic_handler::{closure#0}, !>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/sys/backtrace.rs:182:18
+   9: __rustc::rust_begin_unwind
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:679:5
+  10: core::panicking::panic_fmt
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panicking.rs:80:14
+  11: std::io::stdio::print_to::<std::io::stdio::Stdout>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/io/stdio.rs:1166:9
+  12: std::io::stdio::_print
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/io/stdio.rs:1273:5
+  13: <epicube_craft::gfx::Gfx>::new
+             at ./client/src/gfx.rs:304:9
+  14: epicube_craft::main
+             at ./client/src/main.rs:2596:19
+  15: <fn() as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  16: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/sys/backtrace.rs:166:18
+  17: std::rt::lang_start::<()>::{closure#0}
+  18: <&dyn core::ops::function::Fn<(), Output = i32> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Sync as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:287:21
+  19: std::panicking::catch_unwind::do_call::<&dyn core::ops::function::Fn<(), Output = i32> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Sync, i32>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  20: std::panicking::catch_unwind::<i32, &dyn core::ops::function::Fn<(), Output = i32> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Sync>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  21: std::panic::catch_unwind::<&dyn core::ops::function::Fn<(), Output = i32> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Sync, i32>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  22: std::rt::lang_start_internal::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/rt.rs:175:24
+  23: std::panicking::catch_unwind::do_call::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  24: std::panicking::catch_unwind::<isize, std::rt::lang_start_internal::{closure#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  25: std::panic::catch_unwind::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  26: std::rt::lang_start_internal
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/rt.rs:171:5
+  27: _main
+  28: <unknown>
+

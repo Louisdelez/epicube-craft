@@ -51,7 +51,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowBuilder};
+use winit::window::{CursorGrabMode, Fullscreen, Icon, Window, WindowBuilder};
 
 const HALF_W: f32 = 0.3;
 const HEIGHT: f32 = 1.8;
@@ -2408,6 +2408,33 @@ fn crisp_scaling(window: &Window) {
 #[cfg(not(target_os = "macos"))]
 fn crisp_scaling(_window: &Window) {}
 
+/// Icone du jeu : 256 x 256 pixels, RGBA sans compression (client/icon/icon.png).
+const ICON_RGBA: &[u8] = include_bytes!("../icon/icon-256.rgba");
+const ICON_SIZE: u32 = 256;
+
+/// macOS : le jeu est un executable seul, sans paquet .app pour porter son icone ; on la donne au Dock
+/// une fois l'application creee.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)] // les macros d'objc testent une option de clippy que ce paquet ne declare pas
+fn dock_icon() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    let png: &[u8] = include_bytes!("../icon/icon-512.png");
+    unsafe {
+        let data: *mut Object = msg_send![class!(NSData), dataWithBytes: png.as_ptr() as *const std::ffi::c_void length: png.len()];
+        let image: *mut Object = msg_send![class!(NSImage), alloc];
+        let image: *mut Object = msg_send![image, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, setApplicationIconImage: image];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dock_icon() {}
+
 /// Le jeu lit ses sons, ses ressources et ses sauvegardes dans le dossier courant. Lance d'un double
 /// clic, ce dossier depend du systeme (le dossier personnel, la racine du disque...) : s'il ne contient
 /// pas les donnees du jeu, on se place a cote de l'executable, ou dans le projet qui l'a compile.
@@ -2559,10 +2586,13 @@ fn main() {
     let window = Arc::new(
         WindowBuilder::new()
             .with_title("Epicube Craft")
+            // Fenetre et barre des taches (Windows, Linux).
+            .with_window_icon(Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).ok())
             .with_inner_size(LogicalSize::new(1280.0, 720.0))
             .build(&event_loop)
             .expect("fenetre"),
     );
+    dock_icon();
     let mut gfx = Gfx::new(window.clone(), &img.0);
     crisp_scaling(&window);
     gfx.set_vsync(settings.vsync);
