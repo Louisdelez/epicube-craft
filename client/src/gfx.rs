@@ -3,7 +3,7 @@
 //! et l'interface.
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -172,6 +172,10 @@ pub struct Gfx {
     pbuf: wgpu::Buffer,
     pub meshes: HashMap<(i32, i32), ChunkMesh>,
     pub backend: String,
+    /// Aucune carte graphique utilisable : Windows calcule l'image sur le processeur, tres lentement.
+    pub software: bool,
+    /// Premiere erreur signalee par le moteur graphique depuis la derniere lecture.
+    fault: Arc<Mutex<Option<String>>>,
     atlas_tex: wgpu::Texture,
 }
 
@@ -302,6 +306,15 @@ impl Gfx {
         let info = adapter.get_info();
         let backend = format!("{:?} - {}", info.backend, info.name);
         println!("Rendu : {backend}");
+        // Tout ce que le systeme propose : utile pour comprendre un mauvais choix ou un pilote manquant.
+        for a in wgpu::Instance::new(wgpu::InstanceDescriptor::default()).enumerate_adapters(wgpu::Backends::all()) {
+            let i = a.get_info();
+            println!("  carte : {:?} - {} ({:?}, pilote {} {})", i.backend, i.name, i.device_type, i.driver, i.driver_info);
+        }
+        let software = info.device_type == wgpu::DeviceType::Cpu;
+        if software {
+            println!("Rendu logiciel : aucun pilote de carte graphique utilisable, le jeu sera tres lent");
+        }
         if std::env::var("EPICUBE_BENCH").is_ok() {
             println!("Modes de presentation : {:?}", surface.get_capabilities(&adapter).present_modes);
         }
@@ -311,11 +324,21 @@ impl Gfx {
                 label: None,
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
-                memory_hints: Default::default(),
+                // En rendu logiciel la memoire est celle de l'ordinateur : on la reserve par petits blocs.
+                memory_hints: if software { wgpu::MemoryHints::MemoryUsage } else { wgpu::MemoryHints::Performance },
             },
             None,
         ))
         .expect("impossible de creer le peripherique graphique");
+        // Sans cela, la moindre erreur du moteur graphique ferme le jeu : on la garde pour l'afficher.
+        let fault = Arc::new(Mutex::new(None::<String>));
+        let seen = fault.clone();
+        device.on_uncaptured_error(Box::new(move |e| {
+            eprintln!("Erreur graphique : {e}");
+            if let Ok(mut first) = seen.lock() {
+                first.get_or_insert_with(|| e.to_string());
+            }
+        }));
 
         // Format non sRGB : les couleurs sont ecrites telles qu'on les voit.
         let caps = surface.get_capabilities(&adapter);
@@ -502,6 +525,8 @@ impl Gfx {
 
         let targets = make_targets(&device, &config, (w, h), &post_layout, &pbuf);
         Gfx {
+            software,
+            fault,
             surface,
             device,
             queue,
@@ -532,6 +557,11 @@ impl Gfx {
     }
 
     /// Remplace les textures (rechargement des ressources).
+    /// Erreur graphique survenue depuis le dernier appel, s'il y en a une.
+    pub fn take_fault(&self) -> Option<String> {
+        self.fault.lock().ok().and_then(|mut f| f.take())
+    }
+
     pub fn set_atlas(&mut self, atlas: &[u8]) {
         write_atlas(&self.queue, &self.atlas_tex, atlas);
     }

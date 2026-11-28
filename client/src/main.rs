@@ -2628,6 +2628,10 @@ fn main() {
         showcase: false,
     };
 
+    if gfx.software {
+        shell.error = Some("Aucun pilote de carte graphique trouve : le jeu tourne en rendu logiciel, tres lent. Installez le pilote de votre carte graphique.".to_string());
+    }
+
     // Demarrage direct, sans passer par le menu.
     let demo = std::env::var("EPICUBE_DEMO").ok();
     if let Some(a) = arg("--connect") {
@@ -2723,6 +2727,19 @@ fn main() {
                         let dt = (now - last).as_secs_f32().min(0.05);
                         last = now;
                         shell.frame(dt, &input, &mut gfx, &window, grabbed);
+                        // Erreur du moteur graphique : on quitte la partie avec un message, au lieu de fermer le jeu.
+                        if let Some(fault) = gfx.take_fault() {
+                            let first = fault.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+                            let _ = std::fs::write(CRASH_FILE, format!("Epicube Craft ({} {})\nErreur graphique\nRendu : {}\n\n{fault}\n", std::env::consts::OS, std::env::consts::ARCH, gfx.backend));
+                            if shell.game.is_some() {
+                                shell.leave(&mut gfx);
+                            }
+                            shell.error = Some(if gfx.software {
+                                format!("Erreur graphique ({first}). Aucun pilote de carte graphique n'est installe : installez-le, puis relancez le jeu.")
+                            } else {
+                                format!("Erreur graphique ({first}). Mettez a jour le pilote de votre carte graphique.")
+                            });
+                        }
                         // Mode mesure : cadence libre, quelques secondes de chauffe, puis le compte rendu.
                         if let Some(secs) = bench {
                             if std::env::var("EPICUBE_FULL").is_ok() && window.fullscreen().is_none() {
