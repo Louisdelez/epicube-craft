@@ -187,7 +187,7 @@ pub fn draw(sh: &mut Shell, ui: &mut Ui, inp: &Input, s: f32) -> Action {
                 None => format!("Hors ligne : {}", sh.settings.name),
             };
             wd.ui.text(w - Ui::text_width(&who, s) - 4.0 * s, h - 12.0 * s, s, &who, GREY);
-            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.9", GREY);
+            wd.ui.text(4.0 * s, h - 12.0 * s, s, "Epicube Craft 0.11", GREY);
         }
         Screen::Solo => {
             title(&mut wd, "Monde", (h * 0.06).floor(), 3.0 * s);
